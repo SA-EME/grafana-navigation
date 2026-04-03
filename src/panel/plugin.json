@@ -1,13 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
-  "type": "app",
-  "name": "Navigation",
-  "id": "saeme-navigation-app",
-  "backend": true,
-  "executable": "gpx_navigation",
+  "type": "panel",
+  "name": "Navigation Config",
+  "id": "saeme-navigation-panel",
   "info": {
-    "keywords": ["app"],
-    "description": "",
+    "keywords": ["panel"],
+    "description": "Displays the API URL from the Navigation plugin configuration",
     "author": {
       "name": "SAEME"
     },
@@ -19,13 +17,6 @@
     "version": "%VERSION%",
     "updated": "%TODAY%"
   },
-  "includes": [
-    {
-      "type": "panel",
-      "name": "Navigation Config",
-      "uid": "saeme-navigation-panel"
-    }
-  ],
   "dependencies": {
     "grafanaDependency": ">=12.3.0",
     "plugins": []

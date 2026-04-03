@@ -1,9 +1,9 @@
-import React, { ChangeEvent, useState } from 'react';
+import React, { ChangeEvent, FormEvent, useState } from 'react';
 import { lastValueFrom } from 'rxjs';
 import { css } from '@emotion/css';
 import { AppPluginMeta, GrafanaTheme2, PluginConfigPageProps, PluginMeta } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { Button, Field, FieldSet, Input, SecretInput, useStyles2 } from '@grafana/ui';
+import { Button, Field, FieldSet, Input, useStyles2 } from '@grafana/ui';
 import { testIds } from '../testIds';
 
 type AppPluginSettings = {
@@ -11,33 +11,17 @@ type AppPluginSettings = {
 };
 
 type State = {
-  // The URL to reach our custom API.
   apiUrl: string;
-  // Tells us if the API key secret is set.
-  isApiKeySet: boolean;
-  // A secret key for our custom API.
-  apiKey: string;
 };
 
 export interface AppConfigProps extends PluginConfigPageProps<AppPluginMeta<AppPluginSettings>> {}
 
 const AppConfig = ({ plugin }: AppConfigProps) => {
   const s = useStyles2(getStyles);
-  const { enabled, pinned, jsonData, secureJsonFields } = plugin.meta;
+  const { enabled, pinned, jsonData } = plugin.meta;
   const [state, setState] = useState<State>({
     apiUrl: jsonData?.apiUrl || '',
-    apiKey: '',
-    isApiKeySet: Boolean(secureJsonFields?.apiKey),
   });
-
-  const isSubmitDisabled = Boolean(!state.apiUrl || (!state.isApiKeySet && !state.apiKey));
-
-  const onResetApiKey = () =>
-    setState({
-      ...state,
-      apiKey: '',
-      isApiKeySet: false,
-    });
 
   const onChange = (event: ChangeEvent<HTMLInputElement>) => {
     setState({
@@ -46,45 +30,21 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     });
   };
 
-  const onSubmit = () => {
-    if (isSubmitDisabled) {
-      return;
-    }
-
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     updatePluginAndReload(plugin.meta.id, {
       enabled,
       pinned,
       jsonData: {
         apiUrl: state.apiUrl,
       },
-      // This cannot be queried later by the frontend.
-      // We don't want to override it in case it was set previously and left untouched now.
-      secureJsonData: state.isApiKeySet
-        ? undefined
-        : {
-            apiKey: state.apiKey,
-          },
     });
   };
 
   return (
     <form onSubmit={onSubmit}>
       <FieldSet label="API Settings">
-        <Field label="API Key" description="A secret key for authenticating to our custom API">
-          <SecretInput
-            width={60}
-            id="config-api-key"
-            data-testid={testIds.appConfig.apiKey}
-            name="apiKey"
-            value={state.apiKey}
-            isConfigured={state.isApiKeySet}
-            placeholder={'Your secret API key'}
-            onChange={onChange}
-            onReset={onResetApiKey}
-          />
-        </Field>
-
-        <Field label="API Url" description="" className={s.marginTop}>
+        <Field label="API Url" description="">
           <Input
             width={60}
             name="apiUrl"
@@ -97,7 +57,7 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
         </Field>
 
         <div className={s.marginTop}>
-          <Button type="submit" data-testid={testIds.appConfig.submit} disabled={isSubmitDisabled}>
+          <Button type="submit" data-testid={testIds.appConfig.submit}>
             Save API settings
           </Button>
         </div>
