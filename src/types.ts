@@ -3,6 +3,7 @@ export interface NavLink {
   type: 'dashboard' | 'external';
   uid?: string;
   url?: string;
+  icon?: string;
 }
 
 export type NavItem = NavLink | NavSection;
@@ -10,6 +11,7 @@ export type NavItem = NavLink | NavSection;
 export interface NavSection {
   title: string;
   items: NavItem[];
+  icon?: string;
 }
 
 export interface SearchType {

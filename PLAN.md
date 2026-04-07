@@ -7,7 +7,8 @@
 | 1 | Navigation tree simple | ✅ Terminé |
 | 2 | Recherche intégrée | ✅ Terminé |
 | 3 | Variables dans les liens | ✅ Terminé |
-| 4 | Améliorations UX (icônes, état actif, breadcrumbs…) | ⏳ À faire |
+| 4 | Améliorations UX (icônes, état actif, breadcrumbs) | ✅ Terminé |
+| 5 | Layout horizontal & favoris | ⏳ À faire |
 
 ---
 
@@ -240,10 +241,37 @@ Fonction `resolveVars(str)` :
 
 ## Phase 4 — Améliorations UX
 
-*(À détailler une fois la phase 3 validée)*
+### Tâches
 
-- Icônes sur sections et liens
-- État actif (lien correspondant au dashboard courant mis en valeur)
-- Breadcrumbs
-- Favoris / dashboards récents
+| Tâche | Statut |
+|-------|--------|
+| `types.ts` — champ `icon` sur `NavLink` et `NavSection` | ✅ Fait |
+| `AppConfig` — sélecteur d'icône par section/lien | ✅ Fait |
+| `AppConfig` — réordonnancement des types de recherche (↑↓) | ✅ Fait |
+| `AppConfig` — réordonnancement des sections (↑↓) | ✅ Fait |
+| `SimplePanel` — rendu des icônes | ✅ Fait |
+| `SimplePanel` — état actif (comparaison UID avec URL courante) | ✅ Fait |
+| `SimplePanel` — breadcrumbs au-dessus des sections | ✅ Fait |
+| `PLAN.md` — déplacer "layout horizontal" en phase future | ✅ Fait |
+
+### Icônes
+- Champ optionnel `icon?: string` sur `NavSection` et `NavLink`
+- Dans AppConfig : `Select` avec liste d'icônes Grafana communes + saisie libre (`allowCustomValue`)
+- Dans le panel : composant `Icon` de `@grafana/ui`
+
+### État actif
+- Extraction de l'UID courant depuis `window.location.pathname` (`/d/{uid}/...`)
+- Lien actif = `link.uid === currentUid` ou `resolveVars(link.uid) === currentUid`
+- Style distinct (couleur primaire + fond léger)
+
+### Breadcrumbs
+- Traversal récursif de l'arbre pour trouver le chemin vers le lien actif
+- Affiché au-dessus des sections : `Home › Infrastructure › Servers`
+- Cliquable (chaque segment navigue vers son lien)
+
+---
+
+## Phase 5 — Layout horizontal & favoris *(future)*
+
 - Support layout horizontal
+- Favoris / dashboards récents (localStorage)

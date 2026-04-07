@@ -3,7 +3,7 @@ import { lastValueFrom } from 'rxjs';
 import { css } from '@emotion/css';
 import { AppPluginMeta, GrafanaTheme2, PluginConfigPageProps, PluginMeta, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { Button, Field, FieldSet, IconButton, Input, Select, Switch, useStyles2 } from '@grafana/ui';
+import { Button, Field, FieldSet, Icon, IconButton, Input, Select, Switch, useStyles2 } from '@grafana/ui';
 import { testIds } from '../testIds';
 import {
   isNavSection,
@@ -29,6 +29,14 @@ const LINK_TYPE_OPTIONS = [
   { label: 'Dashboard', value: 'dashboard' as const },
   { label: 'Externe', value: 'external' as const },
 ];
+
+const ICON_OPTIONS = [
+  'folder', 'folder-open', 'sitemap', 'apps', 'dashboard', 'dashboards',
+  'server', 'database', 'cloud', 'globe', 'external-link-alt',
+  'chart-line', 'signal', 'bell', 'cog', 'wrench', 'home-alt',
+  'link', 'star', 'fire', 'bolt', 'heart', 'eye', 'shield',
+  'lock', 'users-alt', 'info-circle', 'exclamation-triangle',
+].map((name) => ({ label: name, value: name }));
 
 const emptyLink = (): NavLink => ({ title: '', type: 'dashboard', uid: '' });
 const emptySubSection = (): NavSection => ({ title: '', items: [] });
@@ -63,6 +71,17 @@ interface LinkRowProps {
 
 const LinkRow = ({ link, dashboardOptions, loadingDashboards, onUpdate, onRemove, styles: s }: LinkRowProps) => (
   <div className={s.linkRow}>
+    <Field label="Icône" className={s.fieldIcon}>
+      <Select
+        options={ICON_OPTIONS}
+        value={link.icon || null}
+        placeholder="—"
+        onChange={(v: SelectableValue<string>) => onUpdate({ icon: v?.value ?? undefined })}
+        isClearable
+        allowCustomValue
+        prefix={link.icon ? <Icon name={link.icon as any} /> : undefined}
+      />
+    </Field>
     <Field label="Titre" className={s.fieldGrow}>
       <Input
         value={link.title}
@@ -172,6 +191,12 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
   const removeSearchType = (i: number) =>
     updateSearchConfig({ types: removeItem(searchConfig.types, i) });
 
+  const moveSearchTypeUp = (i: number) =>
+    updateSearchConfig({ types: swapItems(searchConfig.types, i - 1, i) });
+
+  const moveSearchTypeDown = (i: number) =>
+    updateSearchConfig({ types: swapItems(searchConfig.types, i, i + 1) });
+
   const updateSearchType = (i: number, patch: Partial<SearchType>) =>
     updateSearchConfig({
       types: replaceItem(searchConfig.types, i, { ...searchConfig.types[i], ...patch }),
@@ -278,6 +303,17 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
         {sections.map((section, si) => (
           <div key={si} className={s.sectionBlock}>
             <div className={s.sectionHeader}>
+              <div className={s.iconSelectSmall}>
+                <Select
+                  options={ICON_OPTIONS}
+                  value={section.icon || null}
+                  placeholder="—"
+                  onChange={(v: SelectableValue<string>) => updateSection(si, { ...section, icon: v?.value ?? undefined })}
+                  isClearable
+                  allowCustomValue
+                  prefix={section.icon ? <Icon name={section.icon as any} /> : undefined}
+                />
+              </div>
               <Input
                 className={s.sectionTitle}
                 value={section.title}
@@ -293,6 +329,17 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
               isNavSection(item) ? (
                 <div key={ii} className={s.subSectionBlock}>
                   <div className={s.sectionHeader}>
+                    <div className={s.iconSelectSmall}>
+                      <Select
+                        options={ICON_OPTIONS}
+                        value={item.icon || null}
+                        placeholder="—"
+                        onChange={(v: SelectableValue<string>) => updateItemInSection(si, ii, { ...item, icon: v?.value ?? undefined })}
+                        isClearable
+                        allowCustomValue
+                        prefix={item.icon ? <Icon name={item.icon as any} /> : undefined}
+                      />
+                    </div>
                     <Input
                       className={s.sectionTitle}
                       value={item.title}
@@ -412,6 +459,8 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                     />
                   </Field>
                   <div className={s.removeLink}>
+                    <IconButton name="arrow-up" tooltip="Monter" onClick={() => moveSearchTypeUp(i)} disabled={i === 0} />
+                    <IconButton name="arrow-down" tooltip="Descendre" onClick={() => moveSearchTypeDown(i)} disabled={i === searchConfig.types.length - 1} />
                     <IconButton name="trash-alt" tooltip="Supprimer ce type" onClick={() => removeSearchType(i)} />
                   </div>
                 </div>
@@ -547,6 +596,15 @@ const getStyles = (theme: GrafanaTheme2) => ({
     width: 130px;
     flex-shrink: 0;
     margin-bottom: 0;
+  `,
+  fieldIcon: css`
+    width: 140px;
+    flex-shrink: 0;
+    margin-bottom: 0;
+  `,
+  iconSelectSmall: css`
+    width: 130px;
+    flex-shrink: 0;
   `,
   removeLink: css`
     padding-bottom: ${theme.spacing(0.5)};

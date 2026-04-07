@@ -3,14 +3,44 @@ import { lastValueFrom } from 'rxjs';
 import { css } from '@emotion/css';
 import { GrafanaTheme2, PanelProps } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { useStyles2 } from '@grafana/ui';
-import { isNavSection, NavConfig, NavItem, NavLink, SearchType } from '../types';
+import { Icon, useStyles2 } from '@grafana/ui';
+import { isNavSection, NavConfig, NavItem, NavLink, NavSection, SearchType } from '../types';
 
 const PLUGIN_ID = 'saeme-navigation-app';
 
 export interface SimplePanelOptions {}
 
 const getFontSize = (width: number): number => Math.max(11, Math.min(14, Math.round(width / 30)));
+
+// ── Breadcrumb helpers ───────────────────────────────────────────────────────
+
+interface BreadcrumbItem {
+  title: string;
+  link?: NavLink;
+}
+
+function findBreadcrumb(sections: NavSection[], currentUid: string): BreadcrumbItem[] | null {
+  for (const section of sections) {
+    for (const item of section.items) {
+      if (!isNavSection(item)) {
+        if (item.type === 'dashboard' && item.uid && item.uid === currentUid) {
+          return [{ title: section.title }, { title: item.title, link: item }];
+        }
+      } else {
+        for (const sub of item.items) {
+          if (!isNavSection(sub) && sub.type === 'dashboard' && sub.uid === currentUid) {
+            return [
+              { title: section.title },
+              { title: item.title },
+              { title: sub.title, link: sub },
+            ];
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
 
 // ── Data source query helpers ────────────────────────────────────────────────
 
@@ -94,6 +124,9 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
 
   const [config, setConfig] = useState<NavConfig | null>(null);
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
+
+  // UID du dashboard courant extrait de l'URL (/d/{uid}/...)
+  const currentUid = window.location.pathname.match(/\/d\/([^/]+)/)?.[1] ?? '';
 
   // Search state
   const [selectedType, setSelectedType] = useState<SearchType | null>(null);
@@ -199,6 +232,11 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
     }
   };
 
+  const isActive = (link: NavLink): boolean => {
+    if (!currentUid || link.type !== 'dashboard') { return false; }
+    return link.uid === currentUid || resolveVars(link.uid ?? '') === currentUid;
+  };
+
   const renderItems = (items: NavItem[], parentKey: string, depth: number): React.ReactNode =>
     items.map((item, ii) => {
       const key = `${parentKey}-${ii}`;
@@ -211,6 +249,7 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
               onClick={() => toggle(key)}
             >
               <span className={s.chevron}>{isOpen ? '▼' : '▶'}</span>
+              {item.icon && <Icon name={item.icon as any} className={s.itemIcon} />}
               <span className={s.itemTitle}>{item.title || 'Section sans titre'}</span>
             </button>
             {isOpen && (
@@ -222,9 +261,11 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
           </div>
         );
       }
+      const active = isActive(item);
       return (
-        <button key={key} className={s.link} onClick={() => navigate(item)}>
-          {item.title || '(lien sans titre)'}
+        <button key={key} className={`${s.link} ${active ? s.linkActive : ''}`} onClick={() => navigate(item)}>
+          {item.icon && <Icon name={item.icon as any} className={s.itemIcon} />}
+          <span className={s.itemTitle}>{item.title || '(lien sans titre)'}</span>
         </button>
       );
     });
@@ -291,10 +332,44 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
         </div>
       )}
 
+      {/* ── Breadcrumbs ── */}
+      {(() => {
+        const crumbs = currentUid ? findBreadcrumb(config.sections, currentUid) : null;
+        if (!crumbs) { return null; }
+        return (
+          <div className={s.breadcrumbs}>
+            {config.homeLink && (
+              <>
+                <button className={s.crumbItem} onClick={() => navigate(config.homeLink!)}>
+                  {config.homeLink.title || 'Home'}
+                </button>
+                <span className={s.crumbSep}>›</span>
+              </>
+            )}
+            {crumbs.map((crumb, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <span className={s.crumbSep}>›</span>}
+                {crumb.link ? (
+                  <button className={`${s.crumbItem} ${s.crumbActive}`} onClick={() => navigate(crumb.link!)}>
+                    {crumb.title}
+                  </button>
+                ) : (
+                  <span className={s.crumbItem}>{crumb.title}</span>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        );
+      })()}
+
       {/* ── Home link ── */}
       {config.homeLink && (
         <button className={s.homeLink} onClick={() => navigate(config.homeLink!)}>
-          🏠 {config.homeLink.title || 'Home'}
+          {config.homeLink.icon
+            ? <Icon name={config.homeLink.icon as any} className={s.itemIcon} />
+            : <span>🏠</span>
+          }
+          {config.homeLink.title || 'Home'}
         </button>
       )}
 
@@ -306,6 +381,7 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
           <div key={key} className={s.section}>
             <button className={s.sectionHeader} onClick={() => toggle(key)}>
               <span className={s.chevron}>{isOpen ? '▼' : '▶'}</span>
+              {section.icon && <Icon name={section.icon as any} className={s.itemIcon} />}
               <span className={s.itemTitle}>{section.title || 'Section sans titre'}</span>
             </button>
             {isOpen && (
@@ -420,6 +496,45 @@ const getStyles = (theme: GrafanaTheme2, fontSize: number) => ({
     border-radius: ${theme.shape.radius.pill};
     padding: ${theme.spacing(0.25, 0.75)};
   `,
+  // ── Breadcrumbs ──
+  breadcrumbs: css`
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: ${theme.spacing(0.25)};
+    padding: ${theme.spacing(0.5, 1)};
+    margin-bottom: ${theme.spacing(1)};
+    font-size: ${Math.max(10, fontSize - 1)}px;
+    color: ${theme.colors.text.secondary};
+    border-bottom: 1px solid ${theme.colors.border.weak};
+  `,
+  crumbItem: css`
+    background: none;
+    border: none;
+    padding: ${theme.spacing(0.25, 0.5)};
+    color: ${theme.colors.text.secondary};
+    font-size: ${Math.max(10, fontSize - 1)}px;
+    cursor: pointer;
+    border-radius: ${theme.shape.radius.default};
+    &:hover {
+      color: ${theme.colors.text.primary};
+      background: ${theme.colors.action.hover};
+    }
+  `,
+  crumbActive: css`
+    color: ${theme.colors.text.primary};
+    font-weight: ${theme.typography.fontWeightMedium};
+  `,
+  crumbSep: css`
+    color: ${theme.colors.text.disabled};
+    font-size: ${Math.max(9, fontSize - 2)}px;
+    user-select: none;
+  `,
+  // ── Icons ──
+  itemIcon: css`
+    flex-shrink: 0;
+    opacity: 0.8;
+  `,
   // ── Navigation ──
   homeLink: css`
     display: block;
@@ -502,7 +617,9 @@ const getStyles = (theme: GrafanaTheme2, fontSize: number) => ({
     flex-shrink: 0;
   `,
   link: css`
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: ${theme.spacing(0.75)};
     width: 100%;
     text-align: left;
     background: none;
@@ -512,12 +629,18 @@ const getStyles = (theme: GrafanaTheme2, fontSize: number) => ({
     font-size: ${fontSize}px;
     cursor: pointer;
     border-radius: ${theme.shape.radius.default};
-    white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
     &:hover {
       background: ${theme.colors.action.hover};
       color: ${theme.colors.text.primary};
+    }
+  `,
+  linkActive: css`
+    color: ${theme.colors.primary.text};
+    background: ${theme.colors.primary.transparent};
+    font-weight: ${theme.typography.fontWeightMedium};
+    &:hover {
+      background: ${theme.colors.primary.transparent};
     }
   `,
   emptySection: css`
