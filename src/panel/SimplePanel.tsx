@@ -88,7 +88,7 @@ async function queryDataSource(dataSourceUid: string, query?: string): Promise<S
 
 // ── Main component ───────────────────────────────────────────────────────────
 
-export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width }) => {
+export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, replaceVariables }) => {
   const fontSize = getFontSize(width);
   const s = useStyles2(getStyles, fontSize);
 
@@ -157,10 +157,11 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width })
 
   const navigateToResult = (result: SearchResult) => {
     if (!selectedType) { return; }
+    const resolvedDashboard = resolveVars(result.dashboard);
     const varParam = selectedType.variable
       ? `?var-${encodeURIComponent(selectedType.variable)}=${encodeURIComponent(result.value)}`
       : '';
-    window.location.href = `/d/${result.dashboard}${varParam}`;
+    window.location.href = `/d/${resolvedDashboard}${varParam}`;
   };
 
   const toggle = (key: string) => {
@@ -171,14 +172,29 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width })
     });
   };
 
+  // Résout les variables statiques puis les variables Grafana dans une chaîne
+  const resolveVars = (str: string): string => {
+    let result = str;
+    const statics = config?.staticVars ?? {};
+    // Remplace ${ var } et $var (non suivi d'un caractère de mot)
+    Object.entries(statics).forEach(([key, val]) => {
+      result = result.replace(
+        new RegExp(`\\$\\{${key}\\}|\\$${key}(?![a-zA-Z0-9_])`, 'g'),
+        val
+      );
+    });
+    return replaceVariables(result);
+  };
+
   const navigate = (link: NavLink) => {
     if (link.type === 'dashboard' && link.uid) {
-      window.location.href = `/d/${link.uid}`;
+      window.location.href = `/d/${resolveVars(link.uid)}`;
     } else if (link.type === 'external' && link.url) {
-      if (link.url.startsWith('/')) {
-        window.location.href = link.url;
+      const resolved = resolveVars(link.url);
+      if (resolved.startsWith('/')) {
+        window.location.href = resolved;
       } else {
-        window.open(link.url, '_blank');
+        window.open(resolved, '_blank');
       }
     }
   };

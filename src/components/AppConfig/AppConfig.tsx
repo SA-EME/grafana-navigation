@@ -123,6 +123,10 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     savedConfig.homeLink ?? { title: 'Home', type: 'dashboard', uid: '' }
   );
   const [sections, setSections] = useState<NavSection[]>(savedConfig.sections);
+  // staticVars stocké comme tableau de paires pour l'édition, puis converti en Record au save
+  const [staticVars, setStaticVars] = useState<Array<{ key: string; value: string }>>(
+    Object.entries(savedConfig.staticVars ?? {}).map(([key, value]) => ({ key, value }))
+  );
   // Merge avec les defaults pour gérer les champs ajoutés après une sauvegarde existante
   const [searchConfig, setSearchConfig] = useState<SearchConfig>({
     ...defaultSearchConfig(),
@@ -211,14 +215,26 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     updateItemInSection(si, ii, { ...sub, items: replaceItem(sub.items, li, updatedLink) });
   };
 
+  // ── Static vars helpers ───────────────────────────────────────────
+
+  const addStaticVar = () => setStaticVars((prev) => [...prev, { key: '', value: '' }]);
+  const removeStaticVar = (i: number) => setStaticVars((prev) => removeItem(prev, i));
+  const updateStaticVar = (i: number, patch: Partial<{ key: string; value: string }>) =>
+    setStaticVars((prev) => replaceItem(prev, i, { ...prev[i], ...patch }));
+
   // ── Submit ────────────────────────────────────────────────────────
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const staticVarsRecord: Record<string, string> = {};
+    staticVars.forEach(({ key, value }) => {
+      if (key.trim()) { staticVarsRecord[key.trim()] = value; }
+    });
     const navConfig: NavConfig = {
       homeLink: homeLinkEnabled ? homeLink : undefined,
       sections,
       search: searchConfig.enabled ? searchConfig : undefined,
+      staticVars: Object.keys(staticVarsRecord).length > 0 ? staticVarsRecord : undefined,
     };
     updatePluginAndReload(plugin.meta.id, { enabled, pinned, jsonData: { navConfig } });
   };
@@ -432,6 +448,47 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
         )}
       </FieldSet>
 
+      {/* ── Variables statiques ── */}
+      <FieldSet label="Variables statiques">
+        <p className={s.varsDescription}>
+          Définissez des valeurs fixes réutilisables dans vos liens avec la syntaxe{' '}
+          <code>$nom</code> ou <code>${'{nom}'}</code>.
+        </p>
+
+        {staticVars.map((v, i) => (
+          <div key={i} className={s.staticVarRow}>
+            <Field label="Nom" className={s.fieldFixed}>
+              <Input
+                value={v.key}
+                placeholder="ex: env"
+                onChange={(e) => updateStaticVar(i, { key: e.currentTarget.value })}
+              />
+            </Field>
+            <Field label="Valeur" className={s.fieldGrow}>
+              <Input
+                value={v.value}
+                placeholder="ex: production"
+                onChange={(e) => updateStaticVar(i, { value: e.currentTarget.value })}
+              />
+            </Field>
+            <div className={s.removeLink}>
+              <IconButton name="trash-alt" tooltip="Supprimer" onClick={() => removeStaticVar(i)} />
+            </div>
+          </div>
+        ))}
+
+        <Button
+          variant="secondary"
+          size="sm"
+          icon="plus"
+          type="button"
+          onClick={addStaticVar}
+          className={s.addLinkBtn}
+        >
+          Ajouter une variable
+        </Button>
+      </FieldSet>
+
       <Button type="submit" data-testid={testIds.appConfig.submit}>
         Sauvegarder la navigation
       </Button>
@@ -523,6 +580,23 @@ const getStyles = (theme: GrafanaTheme2) => ({
     align-items: flex-end;
     gap: ${theme.spacing(1)};
     margin-bottom: ${theme.spacing(0.5)};
+  `,
+  varsDescription: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    color: ${theme.colors.text.secondary};
+    margin-bottom: ${theme.spacing(1.5)};
+    code {
+      background: ${theme.colors.background.canvas};
+      border-radius: ${theme.shape.radius.default};
+      padding: ${theme.spacing(0.25, 0.5)};
+      font-family: ${theme.typography.fontFamilyMonospace};
+    }
+  `,
+  staticVarRow: css`
+    display: flex;
+    align-items: flex-end;
+    gap: ${theme.spacing(1)};
+    margin-bottom: ${theme.spacing(1)};
   `,
   queryTextarea: css`
     width: 100%;

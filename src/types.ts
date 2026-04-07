@@ -33,6 +33,7 @@ export interface NavConfig {
   homeLink?: NavLink;
   sections: NavSection[];
   search?: SearchConfig;
+  staticVars?: Record<string, string>;
 }
 
 export const isNavSection = (item: NavItem): item is NavSection => 'items' in item;

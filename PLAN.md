@@ -6,7 +6,7 @@
 |---|-------|--------|
 | 1 | Navigation tree simple | ✅ Terminé |
 | 2 | Recherche intégrée | ✅ Terminé |
-| 3 | Variables dans les liens | ⏳ À faire |
+| 3 | Variables dans les liens | ✅ Terminé |
 | 4 | Améliorations UX (icônes, état actif, breadcrumbs…) | ⏳ À faire |
 
 ---
@@ -192,11 +192,49 @@ Valeur: [192.168.______  ]
 
 ## Phase 3 — Variables dans les liens
 
-*(À détailler une fois la phase 2 validée)*
+### Objectif
+Permettre d'utiliser des variables (`$variable` ou `${variable}`) dans les URLs et UIDs des liens de navigation et dans les URLs de destination des résultats de recherche.
 
-- Support de `$variable` dans les URLs/UIDs
-- Variables de dashboard (injectées depuis le contexte Grafana)
-- Variables statiques définies dans la config du plugin
+### Deux sources de variables
+1. **Variables statiques** — clés/valeurs fixes définies dans AppConfig (ex: `env=production`, `region=eu-west-1`). Centralisées, réutilisables dans tous les liens.
+2. **Variables de dashboard** — variables Grafana courantes du dashboard (ex: `$host`, `$ip`). Injectées via `replaceVariables` de `PanelProps`.
+
+Ordre de résolution : statiques d'abord → variables Grafana ensuite (les variables Grafana ont priorité).
+
+### Syntaxe supportée
+- `$variable` → remplacé par la valeur
+- `${variable}` → remplacé par la valeur (forme explicite)
+
+### Scope
+- Liens de navigation (homeLink + sections)
+- URL de destination des résultats de recherche
+
+### Nouveaux types (`src/types.ts`)
+```typescript
+// Ajout dans NavConfig
+staticVars?: Record<string, string>;
+```
+
+### AppConfig — section "Variables statiques"
+Liste de paires clé/valeur avec add/remove.
+```
+[ + Ajouter une variable ]
+  Nom : [env     ]   Valeur : [production  ]   [✕]
+  Nom : [region  ]   Valeur : [eu-west-1   ]   [✕]
+```
+
+### Panel
+Fonction `resolveVars(str)` :
+1. Remplace `$key` / `${key}` par les valeurs statiques
+2. Passe le résultat dans `replaceVariables()` (PanelProps) pour les variables Grafana
+
+### Tâches
+
+| Tâche | Statut |
+|-------|--------|
+| `types.ts` — `staticVars` dans `NavConfig` | ✅ Fait |
+| `AppConfig` — section variables statiques | ✅ Fait |
+| `SimplePanel` — `resolveVars` + navigation avec variables | ✅ Fait |
 
 ---
 
