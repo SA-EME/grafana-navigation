@@ -5,7 +5,7 @@
 | # | Phase | Statut |
 |---|-------|--------|
 | 1 | Navigation tree simple | ✅ Terminé |
-| 2 | Recherche intégrée | ⏳ À faire |
+| 2 | Recherche intégrée | ✅ Terminé |
 | 3 | Variables dans les liens | ⏳ À faire |
 | 4 | Améliorations UX (icônes, état actif, breadcrumbs…) | ⏳ À faire |
 
@@ -109,12 +109,84 @@ Les sous-sections sont collapsibles indépendamment, indentées visuellement.
 
 ## Phase 2 — Recherche intégrée
 
-*(À détailler une fois la phase 1 validée)*
+### Objectif
+Ajouter un bloc de recherche en haut du panel. L'utilisateur sélectionne un type, saisit une valeur (autocomplete), et navigue vers le dashboard correspondant avec la variable Grafana passée dans l'URL.
 
-- Activer/désactiver la recherche dans la config
-- Définir les types de recherche (`dashboard`, `custom_ip`, `custom_host`)
-- Data source configurable (recommandé : Grafana Business Input)
-- Rendu dans le panel : inputs Type + Value → navigation vers dashboard avec variables
+---
+
+### Structure de données (data source)
+
+La data source doit retourner **un frame par type de recherche**, nommé avec l'ID du type.
+Colonnes attendues dans chaque frame :
+
+| Colonne | Type | Description |
+|---------|------|-------------|
+| `value` | string | Valeur cherchable (IP, hostname…) |
+| `tag` | string | Étiquette affichée (optionnel) |
+| `dashboard` | string | UID du dashboard cible |
+
+Recommandation : **Volkov Labs Business Input** ou tout data source retournant des DataFrames statiques ou dynamiques.
+
+---
+
+### Nouveaux types (`src/types.ts`)
+
+```typescript
+export interface SearchType {
+  id: string;        // identifiant = nom du frame dans la data source
+  label: string;     // affiché dans le sélecteur
+  variable: string;  // variable Grafana passée dans l'URL (?var-{variable}={value})
+}
+
+export interface SearchConfig {
+  enabled: boolean;
+  dataSourceUid: string;
+  types: SearchType[];
+}
+
+// NavConfig étendu :
+export interface NavConfig {
+  homeLink?: NavLink;
+  sections: NavSection[];
+  search?: SearchConfig;
+}
+```
+
+---
+
+### AppConfig — section "Recherche"
+
+- Toggle activer/désactiver la recherche
+- Sélecteur de data source (chargé depuis `GET /api/datasources`)
+- Liste de types de recherche (id, label, variable) avec add/remove
+
+---
+
+### Panel — bloc de recherche
+
+Affiché en haut du panel si `search.enabled` :
+
+```
+Type  : [custom_ip      ▾]
+Valeur: [192.168.______  ]
+         → 192.168.1.1  PC
+         → 192.168.1.2  SWITCH
+```
+
+**Logique :**
+1. Au changement de type → `POST /api/ds/query` pour charger tous les résultats du frame correspondant
+2. Filtrage client-side au fil de la saisie (insensible à la casse)
+3. Clic sur un résultat → `window.location.href = /d/{dashboard}?var-{variable}={value}`
+
+---
+
+### Tâches
+
+| Tâche | Statut |
+|-------|--------|
+| `types.ts` — `SearchType`, `SearchConfig`, update `NavConfig` | ✅ Fait |
+| `AppConfig` — section recherche (toggle, datasource, types) | ✅ Fait |
+| `SimplePanel` — UI recherche + query + navigation | ✅ Fait |
 
 ---
 

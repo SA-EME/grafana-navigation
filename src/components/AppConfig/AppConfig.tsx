@@ -5,7 +5,16 @@ import { AppPluginMeta, GrafanaTheme2, PluginConfigPageProps, PluginMeta, Select
 import { getBackendSrv } from '@grafana/runtime';
 import { Button, Field, FieldSet, IconButton, Input, Select, Switch, useStyles2 } from '@grafana/ui';
 import { testIds } from '../testIds';
-import { isNavSection, NavConfig, NavItem, NavLink, NavSection } from '../../types';
+import {
+  isNavSection,
+  NavConfig,
+  NavItem,
+  NavLink,
+  NavSection,
+  SearchConfig,
+  SearchType,
+  SQL_DS_TYPES,
+} from '../../types';
 
 type AppPluginSettings = {
   navConfig?: NavConfig;
@@ -14,6 +23,7 @@ type AppPluginSettings = {
 export interface AppConfigProps extends PluginConfigPageProps<AppPluginMeta<AppPluginSettings>> {}
 
 type DashboardOption = SelectableValue<string>;
+type DataSourceOption = SelectableValue<string>;
 
 const LINK_TYPE_OPTIONS = [
   { label: 'Dashboard', value: 'dashboard' as const },
@@ -22,6 +32,7 @@ const LINK_TYPE_OPTIONS = [
 
 const emptyLink = (): NavLink => ({ title: '', type: 'dashboard', uid: '' });
 const emptySubSection = (): NavSection => ({ title: '', items: [] });
+const emptySearchType = (): SearchType => ({ id: '', label: '', variable: '' });
 
 // ── Immuable helpers ─────────────────────────────────────────────────────────
 
@@ -39,7 +50,7 @@ function swapItems<T>(arr: T[], a: number, b: number): T[] {
   return next;
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── LinkRow sub-component ────────────────────────────────────────────────────
 
 interface LinkRowProps {
   link: NavLink;
@@ -94,6 +105,13 @@ const LinkRow = ({ link, dashboardOptions, loadingDashboards, onUpdate, onRemove
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+const defaultSearchConfig = (): SearchConfig => ({
+  enabled: false,
+  dataSourceUid: '',
+  dataSourceType: '',
+  types: [],
+});
+
 const AppConfig = ({ plugin }: AppConfigProps) => {
   const s = useStyles2(getStyles);
   const { enabled, pinned, jsonData } = plugin.meta;
@@ -105,8 +123,17 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     savedConfig.homeLink ?? { title: 'Home', type: 'dashboard', uid: '' }
   );
   const [sections, setSections] = useState<NavSection[]>(savedConfig.sections);
+  // Merge avec les defaults pour gérer les champs ajoutés après une sauvegarde existante
+  const [searchConfig, setSearchConfig] = useState<SearchConfig>({
+    ...defaultSearchConfig(),
+    ...(savedConfig.search ?? {}),
+  });
+
   const [dashboardOptions, setDashboardOptions] = useState<DashboardOption[]>([]);
   const [loadingDashboards, setLoadingDashboards] = useState(true);
+  const [dataSourceOptions, setDataSourceOptions] = useState<DataSourceOption[]>([]);
+  // uid → type (ex: "postgres", "mysql"…)
+  const [dsTypeMap, setDsTypeMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     getBackendSrv()
@@ -116,26 +143,45 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
       })
       .catch(() => {})
       .finally(() => setLoadingDashboards(false));
+
+    getBackendSrv()
+      .get('/api/datasources')
+      .then((results: Array<{ uid: string; name: string; type: string }>) => {
+        setDataSourceOptions(
+          results.map((d) => ({ label: `${d.name} (${d.type})`, value: d.uid }))
+        );
+        const typeMap: Record<string, string> = {};
+        results.forEach((d) => { typeMap[d.uid] = d.type; });
+        setDsTypeMap(typeMap);
+      })
+      .catch(() => {});
   }, []);
 
-  // ── Section-level helpers ─────────────────────────────────────────
+  // ── Search helpers ────────────────────────────────────────────────
+
+  const updateSearchConfig = (patch: Partial<SearchConfig>) =>
+    setSearchConfig((prev) => ({ ...prev, ...patch }));
+
+  const addSearchType = () =>
+    updateSearchConfig({ types: [...searchConfig.types, emptySearchType()] });
+
+  const removeSearchType = (i: number) =>
+    updateSearchConfig({ types: removeItem(searchConfig.types, i) });
+
+  const updateSearchType = (i: number, patch: Partial<SearchType>) =>
+    updateSearchConfig({
+      types: replaceItem(searchConfig.types, i, { ...searchConfig.types[i], ...patch }),
+    });
+
+  // ── Section helpers ───────────────────────────────────────────────
 
   const updateSection = (si: number, updated: NavSection) =>
     setSections((prev) => replaceItem(prev, si, updated));
 
-  const addSection = () =>
-    setSections((prev) => [...prev, { title: '', items: [] }]);
-
-  const removeSection = (si: number) =>
-    setSections((prev) => removeItem(prev, si));
-
-  const moveSectionUp = (si: number) =>
-    setSections((prev) => swapItems(prev, si - 1, si));
-
-  const moveSectionDown = (si: number) =>
-    setSections((prev) => swapItems(prev, si, si + 1));
-
-  // ── Item helpers inside a section (top level) ─────────────────────
+  const addSection = () => setSections((prev) => [...prev, { title: '', items: [] }]);
+  const removeSection = (si: number) => setSections((prev) => removeItem(prev, si));
+  const moveSectionUp = (si: number) => setSections((prev) => swapItems(prev, si - 1, si));
+  const moveSectionDown = (si: number) => setSections((prev) => swapItems(prev, si, si + 1));
 
   const addLinkToSection = (si: number) =>
     updateSection(si, { ...sections[si], items: [...sections[si].items, emptyLink()] });
@@ -148,8 +194,6 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
 
   const updateItemInSection = (si: number, ii: number, updated: NavItem) =>
     updateSection(si, { ...sections[si], items: replaceItem(sections[si].items, ii, updated) });
-
-  // ── Item helpers inside a sub-section ────────────────────────────
 
   const addLinkToSubSection = (si: number, ii: number) => {
     const sub = sections[si].items[ii] as NavSection;
@@ -174,6 +218,7 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     const navConfig: NavConfig = {
       homeLink: homeLinkEnabled ? homeLink : undefined,
       sections,
+      search: searchConfig.enabled ? searchConfig : undefined,
     };
     updatePluginAndReload(plugin.meta.id, { enabled, pinned, jsonData: { navConfig } });
   };
@@ -216,7 +261,6 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
       <FieldSet label="Sections de navigation">
         {sections.map((section, si) => (
           <div key={si} className={s.sectionBlock}>
-            {/* Section header */}
             <div className={s.sectionHeader}>
               <Input
                 className={s.sectionTitle}
@@ -229,10 +273,8 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
               <IconButton name="trash-alt" tooltip="Supprimer la section" onClick={() => removeSection(si)} />
             </div>
 
-            {/* Section items */}
             {section.items.map((item, ii) =>
               isNavSection(item) ? (
-                /* Sub-section */
                 <div key={ii} className={s.subSectionBlock}>
                   <div className={s.sectionHeader}>
                     <Input
@@ -270,13 +312,10 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                   </Button>
                 </div>
               ) : (
-                /* Link */
                 <LinkRow
                   key={ii}
                   link={item}
-                  onUpdate={(patch) =>
-                    updateItemInSection(si, ii, { ...item, ...patch } as NavLink)
-                  }
+                  onUpdate={(patch) => updateItemInSection(si, ii, { ...item, ...patch } as NavLink)}
                   onRemove={() => removeItemFromSection(si, ii)}
                   {...linkRowProps}
                 />
@@ -297,6 +336,100 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
         <Button variant="secondary" icon="plus" type="button" onClick={addSection} className={s.marginTop}>
           Ajouter une section
         </Button>
+      </FieldSet>
+
+      {/* ── Recherche ── */}
+      <FieldSet label="Recherche">
+        <Field label="Activer la recherche">
+          <Switch
+            value={searchConfig.enabled}
+            onChange={(e) => updateSearchConfig({ enabled: e.currentTarget.checked })}
+          />
+        </Field>
+
+        {searchConfig.enabled && (
+          <>
+            <Field label="Data source">
+              <Select
+                options={dataSourceOptions}
+                value={searchConfig.dataSourceUid || null}
+                placeholder="Sélectionner une data source..."
+                onChange={(v: DataSourceOption) => {
+                  const uid = v.value ?? '';
+                  updateSearchConfig({ dataSourceUid: uid, dataSourceType: dsTypeMap[uid] ?? '' });
+                }}
+                isClearable
+                width={40}
+              />
+            </Field>
+
+            {searchConfig.dataSourceUid && !SQL_DS_TYPES.includes(searchConfig.dataSourceType) && (
+              <div className={s.dsTypeHint}>
+                {`⚠️ Type de data source "${searchConfig.dataSourceType}" non supporté. Seules les data sources SQL sont supportées (PostgreSQL, MySQL, MSSQL).`}
+              </div>
+            )}
+
+            <div className={s.searchTypesLabel}>Types de recherche</div>
+
+            {searchConfig.types.map((type, i) => (
+              <div key={i} className={s.searchTypeBlock}>
+                <div className={s.searchTypeRow}>
+                  <Field label="ID" className={s.fieldGrow}>
+                    <Input
+                      value={type.id}
+                      placeholder="ex: custom_ip"
+                      onChange={(e) => updateSearchType(i, { id: e.currentTarget.value })}
+                    />
+                  </Field>
+                  <Field label="Label affiché" className={s.fieldGrow}>
+                    <Input
+                      value={type.label}
+                      placeholder="ex: Adresse IP"
+                      onChange={(e) => updateSearchType(i, { label: e.currentTarget.value })}
+                    />
+                  </Field>
+                  <Field label="Variable Grafana" className={s.fieldGrow}>
+                    <Input
+                      value={type.variable}
+                      placeholder="ex: host"
+                      onChange={(e) => updateSearchType(i, { variable: e.currentTarget.value })}
+                    />
+                  </Field>
+                  <div className={s.removeLink}>
+                    <IconButton name="trash-alt" tooltip="Supprimer ce type" onClick={() => removeSearchType(i)} />
+                  </div>
+                </div>
+                {/* Champ query selon le type de data source */}
+                {searchConfig.dataSourceUid && (
+                  <Field
+                    label="Requête SQL"
+                    description="Doit retourner les colonnes : value, tag (optionnel), dashboard"
+                  >
+                    <textarea
+                      className={s.queryTextarea}
+                      value={type.query ?? ''}
+                      placeholder="SELECT value, tag, dashboard FROM ma_table"
+                      onChange={(e) => updateSearchType(i, { query: e.currentTarget.value })}
+                      rows={3}
+                      spellCheck={false}
+                    />
+                  </Field>
+                )}
+              </div>
+            ))}
+
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="plus"
+              type="button"
+              onClick={addSearchType}
+              className={s.addLinkBtn}
+            >
+              Ajouter un type
+            </Button>
+          </>
+        )}
       </FieldSet>
 
       <Button type="submit" data-testid={testIds.appConfig.submit}>
@@ -363,6 +496,49 @@ const getStyles = (theme: GrafanaTheme2) => ({
   `,
   addLinkBtn: css`
     margin-top: ${theme.spacing(1)};
+  `,
+  dsTypeHint: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    color: ${theme.colors.text.secondary};
+    margin-bottom: ${theme.spacing(1)};
+    padding: ${theme.spacing(0.75, 1)};
+    background: ${theme.colors.background.secondary};
+    border-radius: ${theme.shape.radius.default};
+  `,
+  searchTypesLabel: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    font-weight: ${theme.typography.fontWeightMedium};
+    color: ${theme.colors.text.secondary};
+    margin-bottom: ${theme.spacing(1)};
+    margin-top: ${theme.spacing(1)};
+  `,
+  searchTypeBlock: css`
+    border: 1px solid ${theme.colors.border.weak};
+    border-radius: ${theme.shape.radius.default};
+    padding: ${theme.spacing(1.5)};
+    margin-bottom: ${theme.spacing(1.5)};
+  `,
+  searchTypeRow: css`
+    display: flex;
+    align-items: flex-end;
+    gap: ${theme.spacing(1)};
+    margin-bottom: ${theme.spacing(0.5)};
+  `,
+  queryTextarea: css`
+    width: 100%;
+    box-sizing: border-box;
+    background: ${theme.colors.background.canvas};
+    border: 1px solid ${theme.colors.border.medium};
+    border-radius: ${theme.shape.radius.default};
+    color: ${theme.colors.text.primary};
+    font-family: ${theme.typography.fontFamilyMonospace};
+    font-size: ${theme.typography.bodySmall.fontSize};
+    padding: ${theme.spacing(1)};
+    resize: vertical;
+    outline: none;
+    &:focus {
+      border-color: ${theme.colors.primary.border};
+    }
   `,
 });
 
