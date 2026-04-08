@@ -48,6 +48,7 @@ interface SearchResult {
   value: string;
   tag?: string;
   dashboard: string;
+  extras: Record<string, string>; // toutes les autres colonnes, indexées par nom
 }
 
 function parseDataFrames(responseData: unknown): SearchResult[] {
@@ -81,7 +82,14 @@ function parseDataFrames(responseData: unknown): SearchResult[] {
         const dashboard = String(values[dashboardIdx][i] ?? '');
         const tag = tagIdx !== -1 ? String(values[tagIdx][i] ?? '') : undefined;
         if (value && dashboard) {
-          results.push({ value, tag, dashboard });
+          // Capture toutes les colonnes (hors value/tag/dashboard) dans extras
+          const extras: Record<string, string> = {};
+          fields.forEach((f, fi) => {
+            if (fi !== valueIdx && fi !== tagIdx && fi !== dashboardIdx) {
+              extras[f.name] = String((values[fi] as unknown[])?.[i] ?? '');
+            }
+          });
+          results.push({ value, tag, dashboard, extras });
         }
       }
     }
@@ -191,10 +199,17 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
   const navigateToResult = (result: SearchResult) => {
     if (!selectedType) { return; }
     const resolvedDashboard = resolveVars(result.dashboard);
-    const varParam = selectedType.variable
-      ? `?var-${encodeURIComponent(selectedType.variable)}=${encodeURIComponent(result.value)}`
-      : '';
-    window.location.href = `/d/${resolvedDashboard}${varParam}`;
+    const params = new URLSearchParams();
+    if (selectedType.variable) {
+      params.set(`var-${selectedType.variable}`, result.value);
+    }
+    for (const ev of selectedType.extraVariables ?? []) {
+      if (ev.column && ev.variable && result.extras[ev.column] !== undefined) {
+        params.set(`var-${ev.variable}`, result.extras[ev.column]);
+      }
+    }
+    const query = params.toString() ? `?${params.toString()}` : '';
+    window.location.href = `/d/${resolvedDashboard}${query}`;
   };
 
   const toggle = (key: string) => {
@@ -373,6 +388,17 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
         </button>
       )}
 
+      {/* ── Top-level links ── */}
+      {(config.topLinks ?? []).map((link, i) => {
+        const active = isActive(link);
+        return (
+          <button key={i} className={`${s.link} ${active ? s.linkActive : ''}`} onClick={() => navigate(link)}>
+            {link.icon && <Icon name={link.icon as any} className={s.itemIcon} />}
+            <span className={s.itemTitle}>{link.title || '(lien sans titre)'}</span>
+          </button>
+        );
+      })}
+
       {/* ── Sections ── */}
       {config.sections.map((section, si) => {
         const key = String(si);
@@ -537,7 +563,9 @@ const getStyles = (theme: GrafanaTheme2, fontSize: number) => ({
   `,
   // ── Navigation ──
   homeLink: css`
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: ${theme.spacing(0.75)};
     width: 100%;
     text-align: left;
     background: none;
@@ -549,9 +577,7 @@ const getStyles = (theme: GrafanaTheme2, fontSize: number) => ({
     font-weight: ${theme.typography.fontWeightMedium};
     cursor: pointer;
     border-radius: ${theme.shape.radius.default};
-    white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
     &:hover {
       background: ${theme.colors.action.hover};
     }

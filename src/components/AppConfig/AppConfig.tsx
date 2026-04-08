@@ -13,6 +13,7 @@ import {
   NavSection,
   SearchConfig,
   SearchType,
+  SearchTypeVariable,
   SQL_DS_TYPES,
 } from '../../types';
 
@@ -41,6 +42,7 @@ const ICON_OPTIONS = [
 const emptyLink = (): NavLink => ({ title: '', type: 'dashboard', uid: '' });
 const emptySubSection = (): NavSection => ({ title: '', items: [] });
 const emptySearchType = (): SearchType => ({ id: '', label: '', variable: '' });
+const emptyExtraVar = (): SearchTypeVariable => ({ column: '', variable: '' });
 
 // ── Immuable helpers ─────────────────────────────────────────────────────────
 
@@ -102,7 +104,7 @@ const LinkRow = ({ link, dashboardOptions, loadingDashboards, onUpdate, onRemove
           options={dashboardOptions}
           value={link.uid || null}
           isLoading={loadingDashboards}
-          placeholder="Sélectionner un dashboard..."
+          placeholder="Dashboard..."
           onChange={(v: DashboardOption) => onUpdate({ uid: v.value ?? '' })}
           isClearable
         />
@@ -142,6 +144,7 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     savedConfig.homeLink ?? { title: 'Home', type: 'dashboard', uid: '' }
   );
   const [sections, setSections] = useState<NavSection[]>(savedConfig.sections);
+  const [topLinks, setTopLinks] = useState<NavLink[]>(savedConfig.topLinks ?? []);
   // staticVars stocké comme tableau de paires pour l'édition, puis converti en Record au save
   const [staticVars, setStaticVars] = useState<Array<{ key: string; value: string }>>(
     Object.entries(savedConfig.staticVars ?? {}).map(([key, value]) => ({ key, value }))
@@ -240,6 +243,28 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     updateItemInSection(si, ii, { ...sub, items: replaceItem(sub.items, li, updatedLink) });
   };
 
+  // ── Top links helpers ─────────────────────────────────────────────
+
+  const addTopLink = () => setTopLinks((prev) => [...prev, emptyLink()]);
+  const removeTopLink = (i: number) => setTopLinks((prev) => removeItem(prev, i));
+  const updateTopLink = (i: number, patch: Partial<NavLink>) =>
+    setTopLinks((prev) => replaceItem(prev, i, { ...prev[i], ...patch }));
+  const moveTopLinkUp = (i: number) => setTopLinks((prev) => swapItems(prev, i - 1, i));
+  const moveTopLinkDown = (i: number) => setTopLinks((prev) => swapItems(prev, i, i + 1));
+
+  // ── Extra variables helpers (per search type) ─────────────────────
+
+  const addExtraVar = (ti: number) =>
+    updateSearchType(ti, { extraVariables: [...(searchConfig.types[ti].extraVariables ?? []), emptyExtraVar()] });
+
+  const removeExtraVar = (ti: number, vi: number) =>
+    updateSearchType(ti, { extraVariables: removeItem(searchConfig.types[ti].extraVariables ?? [], vi) });
+
+  const updateExtraVar = (ti: number, vi: number, patch: Partial<SearchTypeVariable>) => {
+    const vars = searchConfig.types[ti].extraVariables ?? [];
+    updateSearchType(ti, { extraVariables: replaceItem(vars, vi, { ...vars[vi], ...patch }) });
+  };
+
   // ── Static vars helpers ───────────────────────────────────────────
 
   const addStaticVar = () => setStaticVars((prev) => [...prev, { key: '', value: '' }]);
@@ -257,6 +282,7 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     });
     const navConfig: NavConfig = {
       homeLink: homeLinkEnabled ? homeLink : undefined,
+      topLinks: topLinks.length > 0 ? topLinks : undefined,
       sections,
       search: searchConfig.enabled ? searchConfig : undefined,
       staticVars: Object.keys(staticVarsRecord).length > 0 ? staticVarsRecord : undefined,
@@ -296,6 +322,30 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
             </Button>
           </>
         )}
+      </FieldSet>
+
+      {/* ── Top-level links ── */}
+      <FieldSet label="Liens hors section">
+        <p className={s.varsDescription}>
+          Liens affichés directement sous le lien Home, en dehors de toute section.
+        </p>
+        {topLinks.map((link, i) => (
+          <div key={i} className={s.topLinkRow}>
+            <LinkRow
+              link={link}
+              onUpdate={(patch) => updateTopLink(i, patch)}
+              onRemove={() => removeTopLink(i)}
+              {...linkRowProps}
+            />
+            <div className={s.topLinkOrder}>
+              <IconButton name="arrow-up" tooltip="Monter" onClick={() => moveTopLinkUp(i)} disabled={i === 0} />
+              <IconButton name="arrow-down" tooltip="Descendre" onClick={() => moveTopLinkDown(i)} disabled={i === topLinks.length - 1} />
+            </div>
+          </div>
+        ))}
+        <Button variant="secondary" size="sm" icon="plus" type="button" onClick={addTopLink} className={s.addLinkBtn}>
+          Ajouter un lien
+        </Button>
       </FieldSet>
 
       {/* ── Sections ── */}
@@ -468,7 +518,7 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                 {searchConfig.dataSourceUid && (
                   <Field
                     label="Requête SQL"
-                    description="Doit retourner les colonnes : value, tag (optionnel), dashboard"
+                    description="Doit retourner les colonnes : value, tag (optionnel), dashboard, + toute colonne additionnelle"
                   >
                     <textarea
                       className={s.queryTextarea}
@@ -480,6 +530,42 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                     />
                   </Field>
                 )}
+                {/* Variables additionnelles */}
+                <div className={s.extraVarsLabel}>Variables additionnelles</div>
+                <p className={s.extraVarsDesc}>
+                  Déclarez les colonnes supplémentaires à passer comme variables Grafana lors de la navigation.
+                </p>
+                {(type.extraVariables ?? []).map((ev, vi) => (
+                  <div key={vi} className={s.searchTypeRow}>
+                    <Field label="Colonne" className={s.fieldGrow}>
+                      <Input
+                        value={ev.column}
+                        placeholder="ex: hostid"
+                        onChange={(e) => updateExtraVar(i, vi, { column: e.currentTarget.value })}
+                      />
+                    </Field>
+                    <Field label="Variable Grafana" className={s.fieldGrow}>
+                      <Input
+                        value={ev.variable}
+                        placeholder="ex: hostid"
+                        onChange={(e) => updateExtraVar(i, vi, { variable: e.currentTarget.value })}
+                      />
+                    </Field>
+                    <div className={s.removeLink}>
+                      <IconButton name="trash-alt" tooltip="Supprimer" onClick={() => removeExtraVar(i, vi)} />
+                    </div>
+                  </div>
+                ))}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon="plus"
+                  type="button"
+                  onClick={() => addExtraVar(i)}
+                  className={s.addLinkBtn}
+                >
+                  Ajouter une variable
+                </Button>
               </div>
             ))}
 
@@ -654,6 +740,29 @@ const getStyles = (theme: GrafanaTheme2) => ({
     display: flex;
     align-items: flex-end;
     gap: ${theme.spacing(1)};
+    margin-bottom: ${theme.spacing(1)};
+  `,
+  topLinkRow: css`
+    display: flex;
+    align-items: flex-end;
+    gap: ${theme.spacing(1)};
+    margin-bottom: ${theme.spacing(0.5)};
+  `,
+  topLinkOrder: css`
+    display: flex;
+    gap: ${theme.spacing(0.5)};
+    padding-bottom: ${theme.spacing(0.5)};
+  `,
+  extraVarsLabel: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    font-weight: ${theme.typography.fontWeightMedium};
+    color: ${theme.colors.text.secondary};
+    margin-top: ${theme.spacing(1.5)};
+    margin-bottom: ${theme.spacing(0.25)};
+  `,
+  extraVarsDesc: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    color: ${theme.colors.text.secondary};
     margin-bottom: ${theme.spacing(1)};
   `,
   queryTextarea: css`
