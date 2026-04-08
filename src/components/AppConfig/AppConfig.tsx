@@ -68,10 +68,12 @@ interface LinkRowProps {
   loadingDashboards: boolean;
   onUpdate: (patch: Partial<NavLink>) => void;
   onRemove: () => void;
+  onMoveUp?: (() => void) | null;
+  onMoveDown?: (() => void) | null;
   styles: ReturnType<typeof getStyles>;
 }
 
-const LinkRow = ({ link, dashboardOptions, loadingDashboards, onUpdate, onRemove, styles: s }: LinkRowProps) => (
+const LinkRow = ({ link, dashboardOptions, loadingDashboards, onUpdate, onRemove, onMoveUp, onMoveDown, styles: s }: LinkRowProps) => (
   <div className={s.linkRow}>
     <Field label="Icône" className={s.fieldIcon}>
       <Select
@@ -119,6 +121,12 @@ const LinkRow = ({ link, dashboardOptions, loadingDashboards, onUpdate, onRemove
       </Field>
     )}
     <div className={s.removeLink}>
+      {onMoveUp !== undefined && (
+        <IconButton name="arrow-up" tooltip="Monter" onClick={onMoveUp ?? undefined} disabled={onMoveUp === null} />
+      )}
+      {onMoveDown !== undefined && (
+        <IconButton name="arrow-down" tooltip="Descendre" onClick={onMoveDown ?? undefined} disabled={onMoveDown === null} />
+      )}
       <IconButton name="trash-alt" tooltip="Supprimer le lien" onClick={onRemove} />
     </div>
   </div>
@@ -164,8 +172,13 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
   useEffect(() => {
     getBackendSrv()
       .get('/api/search?type=dash-db&limit=5000')
-      .then((results: Array<{ uid: string; title: string }>) => {
-        setDashboardOptions(results.map((d) => ({ label: d.title, value: d.uid })));
+      .then((results: Array<{ uid: string; title: string; folderTitle?: string }>) => {
+        setDashboardOptions(
+          results.map((d) => ({
+            label: d.folderTitle ? `${d.folderTitle} / ${d.title}` : d.title,
+            value: d.uid,
+          }))
+        );
       })
       .catch(() => {})
       .finally(() => setLoadingDashboards(false));
@@ -226,6 +239,14 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
 
   const updateItemInSection = (si: number, ii: number, updated: NavItem) =>
     updateSection(si, { ...sections[si], items: replaceItem(sections[si].items, ii, updated) });
+
+  const moveItemInSection = (si: number, ii: number, dir: -1 | 1) =>
+    updateSection(si, { ...sections[si], items: swapItems(sections[si].items, ii, ii + dir) });
+
+  const moveItemInSubSection = (si: number, ii: number, li: number, dir: -1 | 1) => {
+    const sub = sections[si].items[ii] as NavSection;
+    updateItemInSection(si, ii, { ...sub, items: swapItems(sub.items, li, li + dir) });
+  };
 
   const addLinkToSubSection = (si: number, ii: number) => {
     const sub = sections[si].items[ii] as NavSection;
@@ -410,6 +431,8 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                       link={subItem as NavLink}
                       onUpdate={(patch) => updateLinkInSubSection(si, ii, li, patch)}
                       onRemove={() => removeItemFromSubSection(si, ii, li)}
+                      onMoveUp={li > 0 ? () => moveItemInSubSection(si, ii, li, -1) : null}
+                      onMoveDown={li < item.items.length - 1 ? () => moveItemInSubSection(si, ii, li, 1) : null}
                       {...linkRowProps}
                     />
                   ))}
@@ -430,6 +453,8 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                   link={item}
                   onUpdate={(patch) => updateItemInSection(si, ii, { ...item, ...patch } as NavLink)}
                   onRemove={() => removeItemFromSection(si, ii)}
+                  onMoveUp={ii > 0 ? () => moveItemInSection(si, ii, -1) : null}
+                  onMoveDown={ii < section.items.length - 1 ? () => moveItemInSection(si, ii, 1) : null}
                   {...linkRowProps}
                 />
               )
