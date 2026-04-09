@@ -15,31 +15,36 @@ export interface NavSection {
 }
 
 export interface SearchTypeVariable {
-  column: string;   // nom de la colonne dans le DataFrame
-  variable: string; // nom de la variable Grafana (?var-{variable}={valeur})
+  column: string;   // DataFrame column name
+  variable: string; // Grafana variable name (?var-{variable}={value})
 }
 
 export interface SearchType {
-  id: string;        // identifiant = nom du frame dans la data source (Business Input) ou refId
-  label: string;     // affiché dans le sélecteur de type
-  variable: string;  // variable Grafana principale — mappe la colonne 'value' (?var-{variable}={value})
-  extraVariables?: SearchTypeVariable[];  // variables additionnelles : colonne → variable Grafana
-  query?: string;    // SQL query (pour SQL) ou JSON query object stringifié (pour autres)
+  id: string;               // unique identifier for this search type
+  label: string;            // displayed in the type selector
+  variable: string;         // primary Grafana variable — maps the 'value' column (?var-{variable}={value})
+  extraVariables?: SearchTypeVariable[];  // additional column → Grafana variable mappings
+  query?: string;           // SQL query used to fetch results
 }
 
 export interface SearchConfig {
   enabled: boolean;
   dataSourceUid: string;
-  dataSourceType: string;  // type Grafana de la data source (postgres, mysql, etc.)
+  dataSourceType: string;   // Grafana data source type (e.g. postgres, grafana-postgresql-datasource)
   types: SearchType[];
 }
 
-// Data sources SQL supportées
-export const SQL_DS_TYPES = ['postgres', 'mysql', 'mssql'];
+// Supported SQL data source types (legacy names + official Grafana plugin IDs)
+export const SQL_DS_TYPES = [
+  'postgres', 'mysql', 'mssql',
+  'grafana-postgresql-datasource',
+  'grafana-mysql-datasource',
+  'grafana-mssql-datasource',
+];
 
 export interface NavConfig {
   homeLink?: NavLink;
-  topLinks?: NavLink[];   // liens hors section (affichés entre Home et les sections)
+  topLinks?: NavLink[];   // standalone links shown between the home link and sections
   sections: NavSection[];
   search?: SearchConfig;
   staticVars?: Record<string, string>;

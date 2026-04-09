@@ -1,9 +1,7 @@
 import React, { FormEvent, useEffect, useState } from 'react';
-import { lastValueFrom } from 'rxjs';
 import { css } from '@emotion/css';
-import { AppPluginMeta, GrafanaTheme2, PluginConfigPageProps, PluginMeta, SelectableValue } from '@grafana/data';
-import { getBackendSrv } from '@grafana/runtime';
-import { Button, Field, FieldSet, Icon, IconButton, Input, Select, Switch, useStyles2 } from '@grafana/ui';
+import { AppPluginMeta, GrafanaTheme2, PluginConfigPageProps } from '@grafana/data';
+import { Button, Combobox, ComboboxOption, Field, FieldSet, IconButton, Input, Switch, useStyles2 } from '@grafana/ui';
 import { testIds } from '../testIds';
 import {
   isNavSection,
@@ -16,123 +14,27 @@ import {
   SearchTypeVariable,
   SQL_DS_TYPES,
 } from '../../types';
+import { replaceItem, removeItem, swapItems } from '../../utils/array';
+import { ICON_OPTIONS, emptyLink, emptySubSection, emptySearchType, emptyExtraVar } from '../../navigation/constants';
+import {
+  AppPluginSettings,
+  DashboardOption,
+  DataSourceOption,
+  fetchDashboards,
+  fetchDataSources,
+  updatePluginAndReload,
+} from '../../api/plugin';
+import { LinkRow } from './LinkRow';
 
-type AppPluginSettings = {
-  navConfig?: NavConfig;
-};
+export type AppConfigStyles = ReturnType<typeof getStyles>;
 
 export interface AppConfigProps extends PluginConfigPageProps<AppPluginMeta<AppPluginSettings>> {}
 
-type DashboardOption = SelectableValue<string>;
-type DataSourceOption = SelectableValue<string>;
-
-const LINK_TYPE_OPTIONS = [
-  { label: 'Dashboard', value: 'dashboard' as const },
-  { label: 'Externe', value: 'external' as const },
-];
-
-const ICON_OPTIONS = [
-  'folder', 'folder-open', 'sitemap', 'apps', 'dashboard', 'dashboards',
-  'server', 'database', 'cloud', 'globe', 'external-link-alt',
-  'chart-line', 'signal', 'bell', 'cog', 'wrench', 'home-alt',
-  'link', 'star', 'fire', 'bolt', 'heart', 'eye', 'shield',
-  'lock', 'users-alt', 'info-circle', 'exclamation-triangle',
-].map((name) => ({ label: name, value: name }));
-
-const emptyLink = (): NavLink => ({ title: '', type: 'dashboard', uid: '' });
-const emptySubSection = (): NavSection => ({ title: '', items: [] });
-const emptySearchType = (): SearchType => ({ id: '', label: '', variable: '' });
-const emptyExtraVar = (): SearchTypeVariable => ({ column: '', variable: '' });
-
-// ── Immuable helpers ─────────────────────────────────────────────────────────
-
-function replaceItem<T>(arr: T[], index: number, item: T): T[] {
-  return arr.map((x, i) => (i === index ? item : x));
-}
-
-function removeItem<T>(arr: T[], index: number): T[] {
-  return arr.filter((_, i) => i !== index);
-}
-
-function swapItems<T>(arr: T[], a: number, b: number): T[] {
-  const next = [...arr];
-  [next[a], next[b]] = [next[b], next[a]];
-  return next;
-}
-
-// ── LinkRow sub-component ────────────────────────────────────────────────────
-
-interface LinkRowProps {
-  link: NavLink;
-  dashboardOptions: DashboardOption[];
-  loadingDashboards: boolean;
-  onUpdate: (patch: Partial<NavLink>) => void;
-  onRemove: () => void;
-  onMoveUp?: (() => void) | null;
-  onMoveDown?: (() => void) | null;
-  styles: ReturnType<typeof getStyles>;
-}
-
-const LinkRow = ({ link, dashboardOptions, loadingDashboards, onUpdate, onRemove, onMoveUp, onMoveDown, styles: s }: LinkRowProps) => (
-  <div className={s.linkRow}>
-    <Field label="Icône" className={s.fieldIcon}>
-      <Select
-        options={ICON_OPTIONS}
-        value={link.icon || null}
-        placeholder="—"
-        onChange={(v: SelectableValue<string>) => onUpdate({ icon: v?.value ?? undefined })}
-        isClearable
-        allowCustomValue
-        prefix={link.icon ? <Icon name={link.icon as any} /> : undefined}
-      />
-    </Field>
-    <Field label="Titre" className={s.fieldGrow}>
-      <Input
-        value={link.title}
-        placeholder="Titre du lien"
-        onChange={(e) => onUpdate({ title: e.currentTarget.value })}
-      />
-    </Field>
-    <Field label="Type" className={s.fieldFixed}>
-      <Select
-        options={LINK_TYPE_OPTIONS}
-        value={link.type}
-        onChange={(v) => onUpdate({ type: v.value, uid: '', url: '' })}
-      />
-    </Field>
-    {link.type === 'dashboard' ? (
-      <Field label="Dashboard" className={s.fieldGrow}>
-        <Select
-          options={dashboardOptions}
-          value={link.uid || null}
-          isLoading={loadingDashboards}
-          placeholder="Dashboard..."
-          onChange={(v: DashboardOption) => onUpdate({ uid: v.value ?? '' })}
-          isClearable
-        />
-      </Field>
-    ) : (
-      <Field label="URL" className={s.fieldGrow}>
-        <Input
-          value={link.url ?? ''}
-          placeholder="https://... ou /"
-          onChange={(e) => onUpdate({ url: e.currentTarget.value })}
-        />
-      </Field>
-    )}
-    <div className={s.removeLink}>
-      {onMoveUp !== undefined && (
-        <IconButton name="arrow-up" tooltip="Monter" onClick={onMoveUp ?? undefined} disabled={onMoveUp === null} />
-      )}
-      {onMoveDown !== undefined && (
-        <IconButton name="arrow-down" tooltip="Descendre" onClick={onMoveDown ?? undefined} disabled={onMoveDown === null} />
-      )}
-      <IconButton name="trash-alt" tooltip="Supprimer le lien" onClick={onRemove} />
-    </div>
-  </div>
-);
-
-// ── Main component ────────────────────────────────────────────────────────────
+const ICON_COMBOBOX_OPTIONS: Array<ComboboxOption<string>> = ICON_OPTIONS.map((o) => ({
+  value: o.value,
+  label: o.label,
+  icon: o.value as any,
+}));
 
 const defaultSearchConfig = (): SearchConfig => ({
   enabled: false,
@@ -151,13 +53,11 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
   const [homeLink, setHomeLink] = useState<NavLink>(
     savedConfig.homeLink ?? { title: 'Home', type: 'dashboard', uid: '' }
   );
-  const [sections, setSections] = useState<NavSection[]>(savedConfig.sections);
   const [topLinks, setTopLinks] = useState<NavLink[]>(savedConfig.topLinks ?? []);
-  // staticVars stocké comme tableau de paires pour l'édition, puis converti en Record au save
+  const [sections, setSections] = useState<NavSection[]>(savedConfig.sections);
   const [staticVars, setStaticVars] = useState<Array<{ key: string; value: string }>>(
     Object.entries(savedConfig.staticVars ?? {}).map(([key, value]) => ({ key, value }))
   );
-  // Merge avec les defaults pour gérer les champs ajoutés après une sauvegarde existante
   const [searchConfig, setSearchConfig] = useState<SearchConfig>({
     ...defaultSearchConfig(),
     ...(savedConfig.search ?? {}),
@@ -166,31 +66,17 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
   const [dashboardOptions, setDashboardOptions] = useState<DashboardOption[]>([]);
   const [loadingDashboards, setLoadingDashboards] = useState(true);
   const [dataSourceOptions, setDataSourceOptions] = useState<DataSourceOption[]>([]);
-  // uid → type (ex: "postgres", "mysql"…)
   const [dsTypeMap, setDsTypeMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    getBackendSrv()
-      .get('/api/search?type=dash-db&limit=5000')
-      .then((results: Array<{ uid: string; title: string; folderTitle?: string }>) => {
-        setDashboardOptions(
-          results.map((d) => ({
-            label: d.folderTitle ? `${d.folderTitle} / ${d.title}` : d.title,
-            value: d.uid,
-          }))
-        );
-      })
+    fetchDashboards()
+      .then(setDashboardOptions)
       .catch(() => {})
       .finally(() => setLoadingDashboards(false));
 
-    getBackendSrv()
-      .get('/api/datasources')
-      .then((results: Array<{ uid: string; name: string; type: string }>) => {
-        setDataSourceOptions(
-          results.map((d) => ({ label: `${d.name} (${d.type})`, value: d.uid }))
-        );
-        const typeMap: Record<string, string> = {};
-        results.forEach((d) => { typeMap[d.uid] = d.type; });
+    fetchDataSources()
+      .then(({ options, typeMap }) => {
+        setDataSourceOptions(options);
         setDsTypeMap(typeMap);
       })
       .catch(() => {});
@@ -218,6 +104,15 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
       types: replaceItem(searchConfig.types, i, { ...searchConfig.types[i], ...patch }),
     });
 
+  // ── Top links helpers ─────────────────────────────────────────────
+
+  const addTopLink = () => setTopLinks((prev) => [...prev, emptyLink()]);
+  const removeTopLink = (i: number) => setTopLinks((prev) => removeItem(prev, i));
+  const updateTopLink = (i: number, patch: Partial<NavLink>) =>
+    setTopLinks((prev) => replaceItem(prev, i, { ...prev[i], ...patch }));
+  const moveTopLinkUp = (i: number) => setTopLinks((prev) => swapItems(prev, i - 1, i));
+  const moveTopLinkDown = (i: number) => setTopLinks((prev) => swapItems(prev, i, i + 1));
+
   // ── Section helpers ───────────────────────────────────────────────
 
   const updateSection = (si: number, updated: NavSection) =>
@@ -243,11 +138,6 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
   const moveItemInSection = (si: number, ii: number, dir: -1 | 1) =>
     updateSection(si, { ...sections[si], items: swapItems(sections[si].items, ii, ii + dir) });
 
-  const moveItemInSubSection = (si: number, ii: number, li: number, dir: -1 | 1) => {
-    const sub = sections[si].items[ii] as NavSection;
-    updateItemInSection(si, ii, { ...sub, items: swapItems(sub.items, li, li + dir) });
-  };
-
   const addLinkToSubSection = (si: number, ii: number) => {
     const sub = sections[si].items[ii] as NavSection;
     updateItemInSection(si, ii, { ...sub, items: [...sub.items, emptyLink()] });
@@ -264,14 +154,10 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
     updateItemInSection(si, ii, { ...sub, items: replaceItem(sub.items, li, updatedLink) });
   };
 
-  // ── Top links helpers ─────────────────────────────────────────────
-
-  const addTopLink = () => setTopLinks((prev) => [...prev, emptyLink()]);
-  const removeTopLink = (i: number) => setTopLinks((prev) => removeItem(prev, i));
-  const updateTopLink = (i: number, patch: Partial<NavLink>) =>
-    setTopLinks((prev) => replaceItem(prev, i, { ...prev[i], ...patch }));
-  const moveTopLinkUp = (i: number) => setTopLinks((prev) => swapItems(prev, i - 1, i));
-  const moveTopLinkDown = (i: number) => setTopLinks((prev) => swapItems(prev, i, i + 1));
+  const moveItemInSubSection = (si: number, ii: number, li: number, dir: -1 | 1) => {
+    const sub = sections[si].items[ii] as NavSection;
+    updateItemInSection(si, ii, { ...sub, items: swapItems(sub.items, li, li + dir) });
+  };
 
   // ── Extra variables helpers (per search type) ─────────────────────
 
@@ -315,9 +201,9 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
 
   return (
     <form onSubmit={onSubmit}>
-      {/* ── Home Link ── */}
-      <FieldSet label="Lien Home">
-        <Field label="Activer un lien Home">
+      {/* ── Home link ── */}
+      <FieldSet label="Home link">
+        <Field label="Enable home link">
           <Switch
             value={homeLinkEnabled}
             onChange={(e) => setHomeLinkEnabled(e.currentTarget.checked)}
@@ -336,19 +222,19 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
               size="sm"
               icon="home-alt"
               type="button"
-              onClick={() => setHomeLink({ title: 'Accueil', type: 'external', url: '/' })}
+              onClick={() => setHomeLink({ title: 'Home', type: 'external', url: '/' })}
               className={s.grafanaHomeBtn}
             >
-              Utiliser la page d&apos;accueil Grafana (/)
+              Use Grafana home page (/)
             </Button>
           </>
         )}
       </FieldSet>
 
       {/* ── Top-level links ── */}
-      <FieldSet label="Liens hors section">
+      <FieldSet label="Standalone links">
         <p className={s.varsDescription}>
-          Liens affichés directement sous le lien Home, en dehors de toute section.
+          Links displayed directly below the home link, outside any section.
         </p>
         {topLinks.map((link, i) => (
           <div key={i} className={s.topLinkRow}>
@@ -356,44 +242,40 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
               link={link}
               onUpdate={(patch) => updateTopLink(i, patch)}
               onRemove={() => removeTopLink(i)}
+              onMoveUp={i > 0 ? () => moveTopLinkUp(i) : null}
+              onMoveDown={i < topLinks.length - 1 ? () => moveTopLinkDown(i) : null}
               {...linkRowProps}
             />
-            <div className={s.topLinkOrder}>
-              <IconButton name="arrow-up" tooltip="Monter" onClick={() => moveTopLinkUp(i)} disabled={i === 0} />
-              <IconButton name="arrow-down" tooltip="Descendre" onClick={() => moveTopLinkDown(i)} disabled={i === topLinks.length - 1} />
-            </div>
           </div>
         ))}
         <Button variant="secondary" size="sm" icon="plus" type="button" onClick={addTopLink} className={s.addLinkBtn}>
-          Ajouter un lien
+          Add link
         </Button>
       </FieldSet>
 
-      {/* ── Sections ── */}
-      <FieldSet label="Sections de navigation">
+      {/* ── Navigation sections ── */}
+      <FieldSet label="Navigation sections">
         {sections.map((section, si) => (
           <div key={si} className={s.sectionBlock}>
             <div className={s.sectionHeader}>
               <div className={s.iconSelectSmall}>
-                <Select
-                  options={ICON_OPTIONS}
-                  value={section.icon || null}
+                <Combobox
+                  options={ICON_COMBOBOX_OPTIONS}
+                  value={section.icon ?? null}
                   placeholder="—"
-                  onChange={(v: SelectableValue<string>) => updateSection(si, { ...section, icon: v?.value ?? undefined })}
+                  onChange={(v) => updateSection(si, { ...section, icon: v?.value ?? undefined })}
                   isClearable
-                  allowCustomValue
-                  prefix={section.icon ? <Icon name={section.icon as any} /> : undefined}
                 />
               </div>
               <Input
                 className={s.sectionTitle}
                 value={section.title}
-                placeholder="Titre de la section"
+                placeholder="Section title"
                 onChange={(e) => updateSection(si, { ...section, title: e.currentTarget.value })}
               />
-              <IconButton name="arrow-up" tooltip="Monter" onClick={() => moveSectionUp(si)} disabled={si === 0} />
-              <IconButton name="arrow-down" tooltip="Descendre" onClick={() => moveSectionDown(si)} disabled={si === sections.length - 1} />
-              <IconButton name="trash-alt" tooltip="Supprimer la section" onClick={() => removeSection(si)} />
+              <IconButton name="arrow-up" tooltip="Move up" onClick={() => moveSectionUp(si)} disabled={si === 0} />
+              <IconButton name="arrow-down" tooltip="Move down" onClick={() => moveSectionDown(si)} disabled={si === sections.length - 1} />
+              <IconButton name="trash-alt" tooltip="Remove section" onClick={() => removeSection(si)} />
             </div>
 
             {section.items.map((item, ii) =>
@@ -401,27 +283,23 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                 <div key={ii} className={s.subSectionBlock}>
                   <div className={s.sectionHeader}>
                     <div className={s.iconSelectSmall}>
-                      <Select
-                        options={ICON_OPTIONS}
-                        value={item.icon || null}
+                      <Combobox
+                        options={ICON_COMBOBOX_OPTIONS}
+                        value={item.icon ?? null}
                         placeholder="—"
-                        onChange={(v: SelectableValue<string>) => updateItemInSection(si, ii, { ...item, icon: v?.value ?? undefined })}
+                        onChange={(v) => updateItemInSection(si, ii, { ...item, icon: v?.value ?? undefined })}
                         isClearable
-                        allowCustomValue
-                        prefix={item.icon ? <Icon name={item.icon as any} /> : undefined}
                       />
                     </div>
                     <Input
                       className={s.sectionTitle}
                       value={item.title}
-                      placeholder="Titre de la sous-section"
-                      onChange={(e) =>
-                        updateItemInSection(si, ii, { ...item, title: e.currentTarget.value })
-                      }
+                      placeholder="Sub-section title"
+                      onChange={(e) => updateItemInSection(si, ii, { ...item, title: e.currentTarget.value })}
                     />
                     <IconButton
                       name="trash-alt"
-                      tooltip="Supprimer la sous-section"
+                      tooltip="Remove sub-section"
                       onClick={() => removeItemFromSection(si, ii)}
                     />
                   </div>
@@ -444,7 +322,7 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                     onClick={() => addLinkToSubSection(si, ii)}
                     className={s.addLinkBtn}
                   >
-                    Ajouter un lien
+                    Add link
                   </Button>
                 </div>
               ) : (
@@ -462,23 +340,23 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
 
             <div className={s.sectionActions}>
               <Button variant="secondary" size="sm" icon="plus" type="button" onClick={() => addLinkToSection(si)}>
-                Ajouter un lien
+                Add link
               </Button>
               <Button variant="secondary" size="sm" icon="folder-plus" type="button" onClick={() => addSubSectionToSection(si)}>
-                Ajouter une sous-section
+                Add sub-section
               </Button>
             </div>
           </div>
         ))}
 
         <Button variant="secondary" icon="plus" type="button" onClick={addSection} className={s.marginTop}>
-          Ajouter une section
+          Add section
         </Button>
       </FieldSet>
 
-      {/* ── Recherche ── */}
-      <FieldSet label="Recherche">
-        <Field label="Activer la recherche">
+      {/* ── Search ── */}
+      <FieldSet label="Search">
+        <Field label="Enable search">
           <Switch
             value={searchConfig.enabled}
             onChange={(e) => updateSearchConfig({ enabled: e.currentTarget.checked })}
@@ -488,12 +366,12 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
         {searchConfig.enabled && (
           <>
             <Field label="Data source">
-              <Select
-                options={dataSourceOptions}
+              <Combobox
+                options={dataSourceOptions.map((o) => ({ value: o.value ?? '', label: o.label ?? o.value ?? '' }))}
                 value={searchConfig.dataSourceUid || null}
-                placeholder="Sélectionner une data source..."
-                onChange={(v: DataSourceOption) => {
-                  const uid = v.value ?? '';
+                placeholder="Select a data source..."
+                onChange={(v) => {
+                  const uid = v?.value ?? '';
                   updateSearchConfig({ dataSourceUid: uid, dataSourceType: dsTypeMap[uid] ?? '' });
                 }}
                 isClearable
@@ -503,11 +381,11 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
 
             {searchConfig.dataSourceUid && !SQL_DS_TYPES.includes(searchConfig.dataSourceType) && (
               <div className={s.dsTypeHint}>
-                {`⚠️ Type de data source "${searchConfig.dataSourceType}" non supporté. Seules les data sources SQL sont supportées (PostgreSQL, MySQL, MSSQL).`}
+                {`⚠️ Data source type "${searchConfig.dataSourceType}" is not supported. Only SQL data sources are supported (PostgreSQL, MySQL, MSSQL).`}
               </div>
             )}
 
-            <div className={s.searchTypesLabel}>Types de recherche</div>
+            <div className={s.searchTypesLabel}>Search types</div>
 
             {searchConfig.types.map((type, i) => (
               <div key={i} className={s.searchTypeBlock}>
@@ -515,69 +393,69 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                   <Field label="ID" className={s.fieldGrow}>
                     <Input
                       value={type.id}
-                      placeholder="ex: custom_ip"
+                      placeholder="e.g. custom_ip"
                       onChange={(e) => updateSearchType(i, { id: e.currentTarget.value })}
                     />
                   </Field>
-                  <Field label="Label affiché" className={s.fieldGrow}>
+                  <Field label="Display label" className={s.fieldGrow}>
                     <Input
                       value={type.label}
-                      placeholder="ex: Adresse IP"
+                      placeholder="e.g. IP Address"
                       onChange={(e) => updateSearchType(i, { label: e.currentTarget.value })}
                     />
                   </Field>
-                  <Field label="Variable Grafana" className={s.fieldGrow}>
+                  <Field label="Grafana variable" className={s.fieldGrow}>
                     <Input
                       value={type.variable}
-                      placeholder="ex: host"
+                      placeholder="e.g. host"
                       onChange={(e) => updateSearchType(i, { variable: e.currentTarget.value })}
                     />
                   </Field>
                   <div className={s.removeLink}>
-                    <IconButton name="arrow-up" tooltip="Monter" onClick={() => moveSearchTypeUp(i)} disabled={i === 0} />
-                    <IconButton name="arrow-down" tooltip="Descendre" onClick={() => moveSearchTypeDown(i)} disabled={i === searchConfig.types.length - 1} />
-                    <IconButton name="trash-alt" tooltip="Supprimer ce type" onClick={() => removeSearchType(i)} />
+                    <IconButton name="arrow-up" tooltip="Move up" onClick={() => moveSearchTypeUp(i)} disabled={i === 0} />
+                    <IconButton name="arrow-down" tooltip="Move down" onClick={() => moveSearchTypeDown(i)} disabled={i === searchConfig.types.length - 1} />
+                    <IconButton name="trash-alt" tooltip="Remove type" onClick={() => removeSearchType(i)} />
                   </div>
                 </div>
-                {/* Champ query selon le type de data source */}
+
                 {searchConfig.dataSourceUid && (
                   <Field
-                    label="Requête SQL"
-                    description="Doit retourner les colonnes : value, tag (optionnel), dashboard, + toute colonne additionnelle"
+                    label="SQL query"
+                    description="Must return columns: value, tag (optional), dashboard, and any extra columns"
                   >
                     <textarea
                       className={s.queryTextarea}
                       value={type.query ?? ''}
-                      placeholder="SELECT value, tag, dashboard FROM ma_table"
+                      placeholder="SELECT value, tag, dashboard FROM my_table"
                       onChange={(e) => updateSearchType(i, { query: e.currentTarget.value })}
                       rows={3}
                       spellCheck={false}
                     />
                   </Field>
                 )}
-                {/* Variables additionnelles */}
-                <div className={s.extraVarsLabel}>Variables additionnelles</div>
+
+                <div className={s.extraVarsLabel}>Additional variables</div>
                 <p className={s.extraVarsDesc}>
-                  Déclarez les colonnes supplémentaires à passer comme variables Grafana lors de la navigation.
+                  Declare extra columns to pass as Grafana variables when navigating to a result.
                 </p>
                 {(type.extraVariables ?? []).map((ev, vi) => (
                   <div key={vi} className={s.searchTypeRow}>
-                    <Field label="Colonne" className={s.fieldGrow}>
+                    <Field label="Column" className={s.fieldGrow}>
                       <Input
                         value={ev.column}
-                        placeholder="ex: hostid"
+                        placeholder="e.g. hostid"
                         onChange={(e) => updateExtraVar(i, vi, { column: e.currentTarget.value })}
                       />
                     </Field>
-                    <Field label="Variable Grafana" className={s.fieldGrow}>
+                    <Field label="Grafana variable" className={s.fieldGrow}>
                       <Input
                         value={ev.variable}
-                        placeholder="ex: hostid"
+                        placeholder="e.g. hostid"
                         onChange={(e) => updateExtraVar(i, vi, { variable: e.currentTarget.value })}
                       />
                     </Field>
                     <div className={s.removeLink}>
-                      <IconButton name="trash-alt" tooltip="Supprimer" onClick={() => removeExtraVar(i, vi)} />
+                      <IconButton name="trash-alt" tooltip="Remove" onClick={() => removeExtraVar(i, vi)} />
                     </div>
                   </div>
                 ))}
@@ -589,7 +467,7 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
                   onClick={() => addExtraVar(i)}
                   className={s.addLinkBtn}
                 >
-                  Ajouter une variable
+                  Add variable
                 </Button>
               </div>
             ))}
@@ -602,37 +480,37 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
               onClick={addSearchType}
               className={s.addLinkBtn}
             >
-              Ajouter un type
+              Add type
             </Button>
           </>
         )}
       </FieldSet>
 
-      {/* ── Variables statiques ── */}
-      <FieldSet label="Variables statiques">
+      {/* ── Static variables ── */}
+      <FieldSet label="Static variables">
         <p className={s.varsDescription}>
-          Définissez des valeurs fixes réutilisables dans vos liens avec la syntaxe{' '}
-          <code>$nom</code> ou <code>${'{nom}'}</code>.
+          Define fixed values reusable in your links with the syntax{' '}
+          <code>$name</code> or <code>${'{name}'}</code>.
         </p>
 
         {staticVars.map((v, i) => (
           <div key={i} className={s.staticVarRow}>
-            <Field label="Nom" className={s.fieldFixed}>
+            <Field label="Name" className={s.fieldFixed}>
               <Input
                 value={v.key}
-                placeholder="ex: env"
+                placeholder="e.g. env"
                 onChange={(e) => updateStaticVar(i, { key: e.currentTarget.value })}
               />
             </Field>
-            <Field label="Valeur" className={s.fieldGrow}>
+            <Field label="Value" className={s.fieldGrow}>
               <Input
                 value={v.value}
-                placeholder="ex: production"
+                placeholder="e.g. production"
                 onChange={(e) => updateStaticVar(i, { value: e.currentTarget.value })}
               />
             </Field>
             <div className={s.removeLink}>
-              <IconButton name="trash-alt" tooltip="Supprimer" onClick={() => removeStaticVar(i)} />
+              <IconButton name="trash-alt" tooltip="Remove" onClick={() => removeStaticVar(i)} />
             </div>
           </div>
         ))}
@@ -645,12 +523,12 @@ const AppConfig = ({ plugin }: AppConfigProps) => {
           onClick={addStaticVar}
           className={s.addLinkBtn}
         >
-          Ajouter une variable
+          Add variable
         </Button>
       </FieldSet>
 
       <Button type="submit" data-testid={testIds.appConfig.submit}>
-        Sauvegarder la navigation
+        Save navigation
       </Button>
     </form>
   );
@@ -698,6 +576,12 @@ const getStyles = (theme: GrafanaTheme2) => ({
     align-items: flex-end;
     gap: ${theme.spacing(1)};
     margin-bottom: ${theme.spacing(1)};
+  `,
+  topLinkRow: css`
+    display: flex;
+    align-items: flex-end;
+    gap: ${theme.spacing(1)};
+    margin-bottom: ${theme.spacing(0.5)};
   `,
   fieldGrow: css`
     flex: 1;
@@ -750,6 +634,18 @@ const getStyles = (theme: GrafanaTheme2) => ({
     gap: ${theme.spacing(1)};
     margin-bottom: ${theme.spacing(0.5)};
   `,
+  extraVarsLabel: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    font-weight: ${theme.typography.fontWeightMedium};
+    color: ${theme.colors.text.secondary};
+    margin-top: ${theme.spacing(1.5)};
+    margin-bottom: ${theme.spacing(0.25)};
+  `,
+  extraVarsDesc: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    color: ${theme.colors.text.secondary};
+    margin-bottom: ${theme.spacing(1)};
+  `,
   varsDescription: css`
     font-size: ${theme.typography.bodySmall.fontSize};
     color: ${theme.colors.text.secondary};
@@ -765,29 +661,6 @@ const getStyles = (theme: GrafanaTheme2) => ({
     display: flex;
     align-items: flex-end;
     gap: ${theme.spacing(1)};
-    margin-bottom: ${theme.spacing(1)};
-  `,
-  topLinkRow: css`
-    display: flex;
-    align-items: flex-end;
-    gap: ${theme.spacing(1)};
-    margin-bottom: ${theme.spacing(0.5)};
-  `,
-  topLinkOrder: css`
-    display: flex;
-    gap: ${theme.spacing(0.5)};
-    padding-bottom: ${theme.spacing(0.5)};
-  `,
-  extraVarsLabel: css`
-    font-size: ${theme.typography.bodySmall.fontSize};
-    font-weight: ${theme.typography.fontWeightMedium};
-    color: ${theme.colors.text.secondary};
-    margin-top: ${theme.spacing(1.5)};
-    margin-bottom: ${theme.spacing(0.25)};
-  `,
-  extraVarsDesc: css`
-    font-size: ${theme.typography.bodySmall.fontSize};
-    color: ${theme.colors.text.secondary};
     margin-bottom: ${theme.spacing(1)};
   `,
   queryTextarea: css`
@@ -807,21 +680,3 @@ const getStyles = (theme: GrafanaTheme2) => ({
     }
   `,
 });
-
-const updatePluginAndReload = async (pluginId: string, data: Partial<PluginMeta<AppPluginSettings>>) => {
-  try {
-    await updatePlugin(pluginId, data);
-    window.location.reload();
-  } catch (e) {
-    console.error('Error while updating the plugin', e);
-  }
-};
-
-const updatePlugin = async (pluginId: string, data: Partial<PluginMeta>) => {
-  const response = await getBackendSrv().fetch({
-    url: `/api/plugins/${pluginId}/settings`,
-    method: 'POST',
-    data,
-  });
-  return lastValueFrom(response);
-};

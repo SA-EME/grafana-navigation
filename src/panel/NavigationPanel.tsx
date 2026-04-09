@@ -1,139 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { lastValueFrom } from 'rxjs';
 import { css } from '@emotion/css';
 import { GrafanaTheme2, PanelProps } from '@grafana/data';
-import { getBackendSrv } from '@grafana/runtime';
 import { Icon, useStyles2 } from '@grafana/ui';
-import { isNavSection, NavConfig, NavItem, NavLink, NavSection, SearchType } from '../types';
+import { isNavSection, NavItem, NavLink, NavSection, SearchType } from '../types';
+import { usePluginConfig } from '../hooks/usePluginConfig';
+import { findBreadcrumb, BreadcrumbItem } from '../navigation/breadcrumb';
+import { queryDataSource, SearchResult } from '../search/helpers';
 
-const PLUGIN_ID = 'saeme-navigation-app';
-
-export interface SimplePanelOptions {}
+export interface NavigationPanelOptions {}
 
 const getFontSize = (width: number): number => Math.max(11, Math.min(14, Math.round(width / 30)));
 
-// ── Breadcrumb helpers ───────────────────────────────────────────────────────
-
-interface BreadcrumbItem {
-  title: string;
-  link?: NavLink;
-}
-
-function findBreadcrumb(sections: NavSection[], currentUid: string): BreadcrumbItem[] | null {
-  for (const section of sections) {
-    for (const item of section.items) {
-      if (!isNavSection(item)) {
-        if (item.type === 'dashboard' && item.uid && item.uid === currentUid) {
-          return [{ title: section.title }, { title: item.title, link: item }];
-        }
-      } else {
-        for (const sub of item.items) {
-          if (!isNavSection(sub) && sub.type === 'dashboard' && sub.uid === currentUid) {
-            return [
-              { title: section.title },
-              { title: item.title },
-              { title: sub.title, link: sub },
-            ];
-          }
-        }
-      }
-    }
-  }
-  return null;
-}
-
-// ── Data source query helpers ────────────────────────────────────────────────
-
-interface SearchResult {
-  value: string;
-  tag?: string;
-  dashboard: string;
-  extras: Record<string, string>; // toutes les autres colonnes, indexées par nom
-}
-
-function parseDataFrames(responseData: unknown): SearchResult[] {
-  const results: SearchResult[] = [];
-  try {
-    const data = responseData as Record<string, unknown>;
-    const queryResult = (data?.results as Record<string, unknown>)?.A as Record<string, unknown>;
-    const frames = queryResult?.frames as Array<Record<string, unknown>>;
-
-    if (!Array.isArray(frames)) {
-      return results;
-    }
-
-    for (const frame of frames) {
-      const schema = frame.schema as Record<string, unknown>;
-      const fields = schema?.fields as Array<{ name: string }>;
-      const values = (frame.data as Record<string, unknown>)?.values as unknown[][];
-      if (!Array.isArray(fields) || !Array.isArray(values)) { continue; }
-
-      const valueIdx = fields.findIndex((f) => f.name === 'value');
-      const tagIdx = fields.findIndex((f) => f.name === 'tag');
-      const dashboardIdx = fields.findIndex((f) => f.name === 'dashboard');
-
-      if (valueIdx === -1 || dashboardIdx === -1) {
-        continue;
-      }
-
-      const rowCount = (values[valueIdx] as unknown[])?.length ?? 0;
-      for (let i = 0; i < rowCount; i++) {
-        const value = String(values[valueIdx][i] ?? '');
-        const dashboard = String(values[dashboardIdx][i] ?? '');
-        const tag = tagIdx !== -1 ? String(values[tagIdx][i] ?? '') : undefined;
-        if (value && dashboard) {
-          // Capture toutes les colonnes (hors value/tag/dashboard) dans extras
-          const extras: Record<string, string> = {};
-          fields.forEach((f, fi) => {
-            if (fi !== valueIdx && fi !== tagIdx && fi !== dashboardIdx) {
-              extras[f.name] = String((values[fi] as unknown[])?.[i] ?? '');
-            }
-          });
-          results.push({ value, tag, dashboard, extras });
-        }
-      }
-    }
-  } catch {
-    // malformed response
-  }
-  return results;
-}
-
-function buildQuery(
-  dataSourceUid: string,
-  query?: string
-): Record<string, unknown> {
-  return {
-    refId: 'A',
-    datasource: { uid: dataSourceUid },
-    rawSql: query ?? '',
-    format: 'table',
-  };
-}
-
-async function queryDataSource(dataSourceUid: string, query?: string): Promise<SearchResult[]> {
-  const now = Date.now();
-  const body = {
-    queries: [buildQuery(dataSourceUid, query)],
-    from: String(now - 3600000),
-    to: String(now),
-  };
-  const response = await lastValueFrom(
-    getBackendSrv().fetch<unknown>({ url: '/api/ds/query', method: 'POST', data: body })
-  );
-  return parseDataFrames(response?.data);
-}
-
-// ── Main component ───────────────────────────────────────────────────────────
-
-export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, replaceVariables }) => {
+export const NavigationPanel: React.FC<PanelProps<NavigationPanelOptions>> = ({ width, replaceVariables }) => {
   const fontSize = getFontSize(width);
   const s = useStyles2(getStyles, fontSize);
 
-  const [config, setConfig] = useState<NavConfig | null>(null);
+  const { config } = usePluginConfig();
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
 
-  // UID du dashboard courant extrait de l'URL (/d/{uid}/...)
+  // Extract current dashboard UID from the URL (/d/{uid}/...)
   const currentUid = window.location.pathname.match(/\/d\/([^/]+)/)?.[1] ?? '';
 
   // Search state
@@ -144,29 +29,23 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
   const [showDropdown, setShowDropdown] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
+  // Initialise open sections and pre-select first search type when config loads
   useEffect(() => {
-    getBackendSrv()
-      .get(`/api/plugins/${PLUGIN_ID}/settings`)
-      .then((res) => {
-        const navConfig: NavConfig = res.jsonData?.navConfig ?? { sections: [] };
-        setConfig(navConfig);
-        const keys = new Set<string>();
-        navConfig.sections.forEach((sec, si) => {
-          keys.add(String(si));
-          sec.items.forEach((item, ii) => {
-            if (isNavSection(item)) { keys.add(`${si}-${ii}`); }
-          });
-        });
-        setOpenKeys(keys);
-        // Pré-sélectionner le premier type de recherche
-        if (navConfig.search?.enabled && navConfig.search.types.length > 0) {
-          setSelectedType(navConfig.search.types[0]);
-        }
-      })
-      .catch(() => setConfig({ sections: [] }));
-  }, []);
+    if (!config) { return; }
+    const keys = new Set<string>();
+    config.sections.forEach((sec, si) => {
+      keys.add(String(si));
+      sec.items.forEach((item, ii) => {
+        if (isNavSection(item)) { keys.add(`${si}-${ii}`); }
+      });
+    });
+    setOpenKeys(keys);
+    if (config.search?.enabled && config.search.types.length > 0) {
+      setSelectedType(config.search.types[0]);
+    }
+  }, [config]);
 
-  // Fermer le dropdown si clic en dehors
+  // Close the dropdown when clicking outside
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
@@ -177,7 +56,7 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // Charger les résultats quand le type change
+  // Reload search results when the selected type changes
   useEffect(() => {
     if (!selectedType || !config?.search?.dataSourceUid) { return; }
     setLoadingResults(true);
@@ -196,35 +75,10 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
       )
     : allResults;
 
-  const navigateToResult = (result: SearchResult) => {
-    if (!selectedType) { return; }
-    const resolvedDashboard = resolveVars(result.dashboard);
-    const params = new URLSearchParams();
-    if (selectedType.variable) {
-      params.set(`var-${selectedType.variable}`, result.value);
-    }
-    for (const ev of selectedType.extraVariables ?? []) {
-      if (ev.column && ev.variable && result.extras[ev.column] !== undefined) {
-        params.set(`var-${ev.variable}`, result.extras[ev.column]);
-      }
-    }
-    const query = params.toString() ? `?${params.toString()}` : '';
-    window.location.href = `/d/${resolvedDashboard}${query}`;
-  };
-
-  const toggle = (key: string) => {
-    setOpenKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) { next.delete(key); } else { next.add(key); }
-      return next;
-    });
-  };
-
-  // Résout les variables statiques puis les variables Grafana dans une chaîne
+  // Resolves static variables first, then Grafana dashboard variables
   const resolveVars = (str: string): string => {
     let result = str;
     const statics = config?.staticVars ?? {};
-    // Remplace ${ var } et $var (non suivi d'un caractère de mot)
     Object.entries(statics).forEach(([key, val]) => {
       result = result.replace(
         new RegExp(`\\$\\{${key}\\}|\\$${key}(?![a-zA-Z0-9_])`, 'g'),
@@ -252,6 +106,30 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
     return link.uid === currentUid || resolveVars(link.uid ?? '') === currentUid;
   };
 
+  const navigateToResult = (result: SearchResult) => {
+    if (!selectedType) { return; }
+    const resolvedDashboard = resolveVars(result.dashboard);
+    const params = new URLSearchParams();
+    if (selectedType.variable) {
+      params.set(`var-${selectedType.variable}`, result.value);
+    }
+    for (const ev of selectedType.extraVariables ?? []) {
+      if (ev.column && ev.variable && result.extras[ev.column] !== undefined) {
+        params.set(`var-${ev.variable}`, result.extras[ev.column]);
+      }
+    }
+    const query = params.toString() ? `?${params.toString()}` : '';
+    window.location.href = `/d/${resolvedDashboard}${query}`;
+  };
+
+  const toggle = (key: string) => {
+    setOpenKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) { next.delete(key); } else { next.add(key); }
+      return next;
+    });
+  };
+
   const renderItems = (items: NavItem[], parentKey: string, depth: number): React.ReactNode =>
     items.map((item, ii) => {
       const key = `${parentKey}-${ii}`;
@@ -265,12 +143,12 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
             >
               <span className={s.chevron}>{isOpen ? '▼' : '▶'}</span>
               {item.icon && <Icon name={item.icon as any} className={s.itemIcon} />}
-              <span className={s.itemTitle}>{item.title || 'Section sans titre'}</span>
+              <span className={s.itemTitle}>{item.title || 'Untitled section'}</span>
             </button>
             {isOpen && (
               <div className={depth === 0 ? s.sectionItems : s.subSectionItems}>
                 {renderItems(item.items, key, depth + 1)}
-                {item.items.length === 0 && <span className={s.emptySection}>Aucun lien</span>}
+                {item.items.length === 0 && <span className={s.emptySection}>No links</span>}
               </div>
             )}
           </div>
@@ -280,13 +158,13 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
       return (
         <button key={key} className={`${s.link} ${active ? s.linkActive : ''}`} onClick={() => navigate(item)}>
           {item.icon && <Icon name={item.icon as any} className={s.itemIcon} />}
-          <span className={s.itemTitle}>{item.title || '(lien sans titre)'}</span>
+          <span className={s.itemTitle}>{item.title || '(untitled link)'}</span>
         </button>
       );
     });
 
   if (!config) {
-    return <div className={s.container}>Chargement...</div>;
+    return <div className={s.container}>Loading...</div>;
   }
 
   const searchEnabled = config.search?.enabled && (config.search?.types?.length ?? 0) > 0;
@@ -294,7 +172,7 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
 
   return (
     <div className={s.container}>
-      {/* ── Recherche ── */}
+      {/* ── Search ── */}
       {searchEnabled && (
         <div className={s.searchBlock} ref={searchRef}>
           <select
@@ -313,7 +191,7 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
           <input
             className={s.searchInput}
             type="text"
-            placeholder={loadingResults ? 'Chargement...' : 'Rechercher...'}
+            placeholder={loadingResults ? 'Loading...' : 'Search...'}
             value={searchInput}
             disabled={loadingResults}
             onChange={(e) => {
@@ -326,7 +204,7 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
           {showDropdown && searchInput.trim() !== '' && (
             <div className={s.dropdown}>
               {filteredResults.length === 0 ? (
-                <div className={s.dropdownEmpty}>Aucun résultat</div>
+                <div className={s.dropdownEmpty}>No results</div>
               ) : (
                 filteredResults.slice(0, 50).map((r, i) => (
                   <button
@@ -361,7 +239,7 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
                 <span className={s.crumbSep}>›</span>
               </>
             )}
-            {crumbs.map((crumb, i) => (
+            {crumbs.map((crumb: BreadcrumbItem, i: number) => (
               <React.Fragment key={i}>
                 {i > 0 && <span className={s.crumbSep}>›</span>}
                 {crumb.link ? (
@@ -388,19 +266,19 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
         </button>
       )}
 
-      {/* ── Top-level links ── */}
+      {/* ── Standalone links ── */}
       {(config.topLinks ?? []).map((link, i) => {
         const active = isActive(link);
         return (
           <button key={i} className={`${s.link} ${active ? s.linkActive : ''}`} onClick={() => navigate(link)}>
             {link.icon && <Icon name={link.icon as any} className={s.itemIcon} />}
-            <span className={s.itemTitle}>{link.title || '(lien sans titre)'}</span>
+            <span className={s.itemTitle}>{link.title || '(untitled link)'}</span>
           </button>
         );
       })}
 
       {/* ── Sections ── */}
-      {config.sections.map((section, si) => {
+      {config.sections.map((section: NavSection, si: number) => {
         const key = String(si);
         const isOpen = openKeys.has(key);
         return (
@@ -408,12 +286,12 @@ export const SimplePanel: React.FC<PanelProps<SimplePanelOptions>> = ({ width, r
             <button className={s.sectionHeader} onClick={() => toggle(key)}>
               <span className={s.chevron}>{isOpen ? '▼' : '▶'}</span>
               {section.icon && <Icon name={section.icon as any} className={s.itemIcon} />}
-              <span className={s.itemTitle}>{section.title || 'Section sans titre'}</span>
+              <span className={s.itemTitle}>{section.title || 'Untitled section'}</span>
             </button>
             {isOpen && (
               <div className={s.sectionItems}>
                 {renderItems(section.items, key, 0)}
-                {section.items.length === 0 && <span className={s.emptySection}>Aucun lien</span>}
+                {section.items.length === 0 && <span className={s.emptySection}>No links</span>}
               </div>
             )}
           </div>
