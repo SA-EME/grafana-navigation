@@ -6,6 +6,8 @@
 
 It allows administrators to define a single navigation structure and search system from a dedicated configuration page, and reuse it everywhere without duplicating configuration.
 
+![Navigation Panel](assets/panel.png)
+
 ---
 
 ## Goals
