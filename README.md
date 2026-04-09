@@ -6,6 +6,8 @@
 
 It allows administrators to define a single navigation structure and search system from a dedicated configuration page, and reuse it everywhere without duplicating configuration.
 
+![Navigation Panel](assets/panel.png)
+
 ---
 
 ## Goals
@@ -151,6 +153,18 @@ The plugin configuration is divided into two main sections:
 1. Configure the plugin from the configuration page
 2. Add the **Navigation panel** to any dashboard
 3. The panel will automatically load the global configuration
+
+### Recommended panel size
+
+The Navigation panel is designed for **vertical layout** and adapts its font size automatically based on its width.
+
+| Panel width (Grafana columns) | Behaviour |
+|-------------------------------|-----------|
+| 3 – 5 columns ✅ | Ideal — font scales between 11 px and 14 px, text truncates cleanly |
+| < 3 columns | Text may be too small or truncated |
+| > 5 columns | Font reaches max size (14 px), extra space is unused |
+
+> Set the panel height freely — the content is scrollable if it overflows.
 
 ---
 

@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    type: postgres
+    uid: saeme-postgres
+    url: postgres:5432
+    database: grafana
+    user: grafana
+    secureJsonData:
+      password: grafana
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+    editable: true

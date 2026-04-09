@@ -1,11 +1,53 @@
 apiVersion: 1
 
 apps:
-  - type: 'saeme-navigation-app'
+  - type: saeme-navigation-app
     org_id: 1
-    org_name: 'SAEME'
+    org_name: Main Org.
     disabled: false
     jsonData:
-      apiUrl: http://default-url.com
-    secureJsonData:
-      apiKey: secret-key
+      navConfig:
+        homeLink:
+          title: Home
+          type: external
+          url: /
+        sections:
+          - title: Infrastructure
+            items:
+              - title: Servers
+                type: dashboard
+                uid: ""
+              - title: Network
+                type: dashboard
+                uid: ""
+          - title: Monitoring
+            items:
+              - title: Logs
+                type: dashboard
+                uid: ""
+              - title: Metrics
+                type: dashboard
+                uid: ""
+        search:
+          enabled: false
+          dataSourceUid: saeme-postgres
+          dataSourceType: postgres
+          types:
+            - id: custom_ip
+              label: IP Address
+              variable: ip
+              query: >-
+                SELECT * FROM (VALUES
+                  ('192.168.1.1', 'PC',     'replace-with-dashboard-uid'),
+                  ('192.168.1.2', 'SWITCH', 'replace-with-dashboard-uid'),
+                  ('10.0.0.1',   'SERVER', 'replace-with-dashboard-uid')
+                ) AS t(value, tag, dashboard)
+            - id: custom_host
+              label: Hostname
+              variable: host
+              query: >-
+                SELECT * FROM (VALUES
+                  ('Device01', 'PC',     'replace-with-dashboard-uid'),
+                  ('Switch01', 'SWITCH', 'replace-with-dashboard-uid'),
+                  ('Server01', 'SERVER', 'replace-with-dashboard-uid')
+                ) AS t(value, tag, dashboard)
